@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Einstellungen - LOX-MTEC{% endblock %}
+
+{% block content %}
+<h1>Einstellungen</h1>
+<p class="hint">
+  Änderungen werden in die <code>config.yaml</code> im Volume geschrieben und sofort
+  übernommen - ein Neustart des Containers ist nicht nötig.
+</p>
+
+<div id="errors"></div>
+
+<form id="settings">
+  <div class="grid two">
+    <div class="card">
+      <h3>Wechselrichter (Modbus TCP)</h3>
+      <div class="field">
+        <label for="modbus.host">IP / Hostname des espressif-Servers</label>
+        <input name="modbus.host" id="modbus.host">
+        <div class="desc">Der WLAN-Stick des Wechselrichters, meist <code>espressif</code>.</div>
+      </div>
+      <div class="field"><label for="modbus.port">Port</label><input type="number" name="modbus.port" id="modbus.port">
+        <div class="desc">Firmware &lt; V27.52.4.0: 5743</div></div>
+      <div class="field"><label for="modbus.port_fallback">Ausweich-Port</label><input type="number" name="modbus.port_fallback" id="modbus.port_fallback">
+        <div class="desc">Firmware &gt; V27.52.4.0: 502. Wird automatisch probiert, wenn der erste Port nicht antwortet.</div></div>
+      <div class="field"><label for="modbus.slave">Slave-ID</label><input type="number" name="modbus.slave" id="modbus.slave"></div>
+      <div class="field"><label for="modbus.framer">Framer</label>
+        <select name="modbus.framer" id="modbus.framer">
+          <option>rtu</option><option>socket</option><option>ascii</option><option>tls</option>
+        </select></div>
+      <div class="field"><label for="modbus.timeout">Timeout (s)</label><input type="number" name="modbus.timeout" id="modbus.timeout"></div>
+      <div class="field"><label for="modbus.retries">Wiederholungen</label><input type="number" name="modbus.retries" id="modbus.retries"></div>
+    </div>
+
+    <div class="card">
+      <h3>Loxone</h3>
+      <div class="field">
+        <label for="loxone.mode">Übertragungsart</label>
+        <select name="loxone.mode" id="loxone.mode">
+          <option value="udp">UDP-Push an virtuellen UDP-Eingang (empfohlen)</option>
+          <option value="http">HTTP-Push an virtuellen Eingang (/dev/sps/io/...)</option>
+          <option value="off">Kein Push - Loxone holt die Werte selbst (REST)</option>
+        </select>
+        <div class="desc">Die REST-Schnittstelle ist immer aktiv, unabhängig von dieser Einstellung.</div>
+      </div>
+      <div class="field"><label for="loxone.host">Miniserver IP / Hostname</label><input name="loxone.host" id="loxone.host"></div>
+      <div class="field lox-udp"><label for="loxone.udp_port">UDP-Port</label><input type="number" name="loxone.udp_port" id="loxone.udp_port">
+        <div class="desc">Der Port, den du im virtuellen UDP-Eingang eingetragen hast.</div></div>
+      <div class="field lox-http"><label for="loxone.http_scheme">Protokoll</label>
+        <select name="loxone.http_scheme" id="loxone.http_scheme"><option>http</option><option>https</option></select></div>
+      <div class="field lox-http"><label for="loxone.http_port">HTTP-Port</label><input type="number" name="loxone.http_port" id="loxone.http_port"></div>
+      <div class="field lox-http"><label for="loxone.user">Benutzer</label><input name="loxone.user" id="loxone.user"></div>
+      <div class="field lox-http"><label for="loxone.password">Passwort</label><input type="password" name="loxone.password" id="loxone.password"></div>
+      <div class="field"><label for="loxone.prefix">Namens-Präfix</label><input name="loxone.prefix" id="loxone.prefix" placeholder="z.B. mtec_">
+        <div class="desc">Wird jedem Loxone-Namen vorangestellt - praktisch, um die Eingänge im Miniserver zu gruppieren.</div></div>
+      <div class="field inline"><input type="checkbox" name="loxone.send_only_on_change" id="loxone.send_only_on_change">
+        <label for="loxone.send_only_on_change">Nur bei Änderung senden</label></div>
+      <div class="field"><label for="loxone.heartbeat">Heartbeat (s)</label><input type="number" name="loxone.heartbeat" id="loxone.heartbeat">
+        <div class="desc">Unveränderte Werte trotzdem alle N Sekunden erneut senden. 0 = nie.</div></div>
+      <div class="field"><label for="loxone.timeout">HTTP-Timeout (s)</label><input type="number" name="loxone.timeout" id="loxone.timeout"></div>
+    </div>
+
+    <div class="card">
+      <h3>Abfrage-Intervalle</h3>
+      <div class="field"><label for="poll.now">Aktuelle Werte (s)</label><input type="number" name="poll.now" id="poll.now">
+        <div class="desc">Taktgeber des Containers. Bei jedem Durchlauf werden die Basiswerte plus eine erweiterte Gruppe gelesen.</div></div>
+      <div class="field"><label for="poll.day">Tagesstatistik (s)</label><input type="number" name="poll.day" id="poll.day"></div>
+      <div class="field"><label for="poll.total">Gesamtstatistik (s)</label><input type="number" name="poll.total" id="poll.total"></div>
+      <div class="field"><label for="poll.config">Konfigurationswerte (s)</label><input type="number" name="poll.config" id="poll.config"></div>
+    </div>
+
+    <div class="card">
+      <h3>Watchdog</h3>
+      <div class="field inline"><input type="checkbox" name="watchdog.enabled" id="watchdog.enabled">
+        <label for="watchdog.enabled">Watchdog aktiv</label></div>
+      <div class="field"><label for="watchdog.stale_after">Reconnect nach (s) ohne Daten</label><input type="number" name="watchdog.stale_after" id="watchdog.stale_after"></div>
+      <div class="field"><label for="watchdog.exit_after">Container-Neustart nach (s) ohne Daten</label><input type="number" name="watchdog.exit_after" id="watchdog.exit_after">
+        <div class="desc">0 = nie beenden. Sonst beendet sich der Prozess mit Exit-Code 1, damit Docker (<code>restart: unless-stopped</code>) neu startet.</div></div>
+    </div>
+
+    <div class="card">
+      <h3>Web-Oberfläche</h3>
+      <div class="field"><label for="web.host">Bind-Adresse</label><input name="web.host" id="web.host">
+        <div class="desc">Wirkt erst nach einem Neustart des Containers.</div></div>
+      <div class="field"><label for="web.port">Port</label><input type="number" name="web.port" id="web.port">
+        <div class="desc">Wirkt erst nach einem Neustart des Containers.</div></div>
+      <div class="field"><label for="web.auth_user">Benutzer (leer = kein Login)</label><input name="web.auth_user" id="web.auth_user"></div>
+      <div class="field"><label for="web.auth_password">Passwort</label><input type="password" name="web.auth_password" id="web.auth_password">
+        <div class="desc">Achtung: Der Login schützt auch die REST-Schnittstelle. Loxone muss dann
+          <code>http://benutzer:passwort@host:port/api/v1/values</code> abfragen.</div></div>
+    </div>
+
+    <div class="card">
+      <h3>MQTT (optional)</h3>
+      <p class="hint">Nur nötig, wenn zusätzlich ein Broker beliefert werden soll - für Loxone wird MQTT nicht gebraucht.</p>
+      <div class="field inline"><input type="checkbox" name="mqtt.enabled" id="mqtt.enabled">
+        <label for="mqtt.enabled">MQTT aktiv</label></div>
+      <div class="field"><label for="mqtt.host">Broker</label><input name="mqtt.host" id="mqtt.host"></div>
+      <div class="field"><label for="mqtt.port">Port</label><input type="number" name="mqtt.port" id="mqtt.port"></div>
+      <div class="field"><label for="mqtt.user">Benutzer</label><input name="mqtt.user" id="mqtt.user"></div>
+      <div class="field"><label for="mqtt.password">Passwort</label><input type="password" name="mqtt.password" id="mqtt.password"></div>
+      <div class="field"><label for="mqtt.topic">Basis-Topic</label><input name="mqtt.topic" id="mqtt.topic"></div>
+    </div>
+
+    <div class="card">
+      <h3>Logging</h3>
+      <div class="field"><label for="logging.level">Level</label>
+        <select name="logging.level" id="logging.level">
+          <option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option>
+        </select></div>
+      <div class="field"><label for="logging.buffer_size">Zeilen im Speicher</label><input type="number" name="logging.buffer_size" id="logging.buffer_size"></div>
+    </div>
+  </div>
+
+  <div class="toolbar" style="margin-top:16px">
+    <button class="primary" type="submit">Speichern</button>
+    <button type="button" id="reload">Verwerfen</button>
+    <button type="button" id="test">Testwert an Loxone senden</button>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const form = document.getElementById("settings");
+
+  function fill(config) {
+    for (const element of form.elements) {
+      if (!element.name || !element.name.includes(".")) continue;
+      const [section, key] = element.name.split(".");
+      const value = (config[section] || {})[key];
+      if (value === undefined) continue;
+      if (element.type === "checkbox") element.checked = Boolean(value);
+      else element.value = value;
+    }
+    toggleMode();
+  }
+
+  function collect() {
+    const payload = {};
+    for (const element of form.elements) {
+      if (!element.name || !element.name.includes(".")) continue;
+      const [section, key] = element.name.split(".");
+      payload[section] = payload[section] || {};
+      payload[section][key] = element.type === "checkbox" ? element.checked : element.value;
+    }
+    return payload;
+  }
+
+  /* Only show the fields that matter for the selected transport. */
+  function toggleMode() {
+    const mode = document.getElementById("loxone.mode").value;
+    document.querySelectorAll(".lox-udp").forEach((el) => {
+      el.style.display = mode === "udp" ? "" : "none";
+    });
+    document.querySelectorAll(".lox-http").forEach((el) => {
+      el.style.display = mode === "http" ? "" : "none";
+    });
+  }
+  document.getElementById("loxone.mode").onchange = toggleMode;
+
+  function showErrors(errors) {
+    const host = document.getElementById("errors");
+    if (!errors || !errors.length) {
+      host.innerHTML = "";
+      return;
+    }
+    host.innerHTML = `<div class="errors"><b>Bitte korrigieren:</b>
+      <ul>${errors.map((error) => `<li>${error}</li>`).join("")}</ul></div>`;
+  }
+
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    showErrors(null);
+    try {
+      const result = await LX.send("/api/v1/config", collect());
+      fill(result.config);
+      LX.toast("Einstellungen gespeichert", "ok");
+    } catch (err) {
+      showErrors(err.message.split(" · "));
+      LX.toast("Speichern fehlgeschlagen", "error");
+    }
+  };
+
+  document.getElementById("reload").onclick = load;
+  document.getElementById("test").onclick = async () => {
+    await LX.action("/api/v1/actions/test", "Testwert gesendet");
+  };
+
+  async function load() {
+    fill(await LX.get("/api/v1/config"));
+    showErrors(null);
+  }
+
+  load();
+</script>
+{% endblock %}

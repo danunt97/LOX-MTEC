@@ -1,6 +1,283 @@
-# M-TEC MQTT
+# LOX-MTEC
 
-## Introduction
+**M-TEC Energybutler → Loxone Miniserver. Ein Docker-Container, Weboberfläche, Watchdog.**
+
+LOX-MTEC liest die Werte eines M-TEC Energybutler (Wattsonic / Sunways / Daxtromn) per
+Modbus TCP aus und schreibt sie direkt in einen Loxone Miniserver. Der Umweg über
+ioBroker + Simple-API + MQTT-Broker entfällt – es läuft alles in einem Container.
+
+> Dieses Projekt ist ein Fork von [croedel/MTECmqtt](https://github.com/croedel/MTECmqtt).
+> Der ursprüngliche MQTT-/Home-Assistant-Teil bleibt erhalten (siehe [unten](#original-project-mtecmqtt)),
+> LOX-MTEC ergänzt die Loxone-Anbindung, die Weboberfläche und das Docker-Setup.
+
+## Inhalt
+
+- [Was der Container macht](#was-der-container-macht)
+- [Schnellstart](#schnellstart)
+- [Loxone einrichten](#loxone-einrichten)
+- [Weboberfläche](#weboberfläche)
+- [Konfiguration](#konfiguration)
+- [REST-Schnittstelle](#rest-schnittstelle)
+- [Watchdog und Health-Check](#watchdog-und-health-check)
+- [Entwicklung](#entwicklung)
+
+---
+
+## Was der Container macht
+
+```
+ ┌──────────────────┐  Modbus TCP   ┌───────────────────────────────┐
+ │ M-TEC Wechsel-   │ ────────────► │           LOX-MTEC            │
+ │ richter          │   Port 5743   │  ┌─────────────────────────┐  │
+ │ (espressif-Stick)│   oder 502    │  │ Poller (alle 10 s)      │  │
+ └──────────────────┘               │  │ Watchdog                │  │
+                                    │  │ Web-GUI + REST-API      │  │
+                                    │  └─────────────────────────┘  │
+                                    └───────┬──────────┬────────────┘
+                                 Push (UDP  │          │  Pull (REST)
+                                 oder HTTP) │          │
+                                            ▼          ▼
+                                    ┌───────────────────────────────┐
+                                    │      Loxone Miniserver        │
+                                    │  virtuelle (UDP-)Eingänge     │
+                                    └───────────────────────────────┘
+```
+
+* **85 Werte** vom Wechselrichter: PV-Leistung, Netzbezug/-einspeisung, Batterie (SOC, Strom,
+  Temperatur, Zellspannungen), Backup-Phasen, Tages- und Gesamtstatistik sowie berechnete
+  Werte wie Hausverbrauch, Autarkiegrad und Eigenverbrauchsquote.
+* **Drei Wege nach Loxone**, frei wählbar – UDP-Push, HTTP-Push oder REST-Pull.
+* **Weboberfläche** zum Einstellen und Kontrollieren: Live-Werte, Zuordnung der Loxone-Namen,
+  Verbindungseinstellungen, Log.
+* **Vorlagen-Export** für Loxone Config: alle virtuellen Eingänge inklusive Befehlserkennung
+  und Einheit als XML – einmal importieren statt 80× von Hand anlegen.
+* **Watchdog**: erkennt abgerissene Modbus-Verbindungen, verbindet neu und startet den
+  Container im Zweifel neu.
+* **MQTT bleibt optional** verfügbar, falls parallel noch evcc oder Home Assistant beliefert
+  werden soll.
+
+Die Modbus-Register werden geclustert gelesen: benachbarte Register landen in einer einzigen
+Anfrage, und die selten benötigten Gruppen (Tages-/Gesamtstatistik, Konfiguration) laufen auf
+eigenen, langsameren Intervallen. Das hält die Last auf dem Wechselrichter niedrig.
+
+---
+
+## Schnellstart
+
+### Docker Compose (auch auf der Synology)
+
+```bash
+git clone https://github.com/danunt97/LOX-MTEC.git
+cd LOX-MTEC
+mkdir -p config && sudo chown -R 1000:1000 config
+docker compose up -d
+```
+
+Danach `http://<NAS-IP>:8080` im Browser öffnen.
+
+Der Container läuft als Benutzer `1000` – deshalb der `chown`. Wer das nicht will, ergänzt in
+der `docker-compose.yml` einfach `user: "0:0"`.
+
+### Ohne Compose
+
+```bash
+docker build -f docker/Dockerfile -t loxmtec .
+docker run -d --name loxmtec --restart unless-stopped \
+  -p 8080:8080 \
+  -v /volume1/docker/loxmtec:/config \
+  -e LOXMTEC_MODBUS_HOST=espressif \
+  -e LOXMTEC_LOXONE_HOST=192.168.1.10 \
+  loxmtec
+```
+
+### Synology Container Manager (ohne Kommandozeile)
+
+1. In der DSM-Dateistation einen Ordner anlegen, z. B. `docker/loxmtec`.
+2. Container Manager → **Projekt** → **Erstellen**, Pfad auf den Ordner setzen und den Inhalt
+   der `docker-compose.yml` einfügen.
+3. Projekt starten, danach `http://<NAS-IP>:8080` aufrufen.
+
+Ein `host`-Netzwerk ist nicht nötig: der Container braucht nur ausgehende Verbindungen zum
+Wechselrichter und zum Miniserver.
+
+### Erster Start
+
+Beim ersten Start legt der Container eine `config.yaml` im `/config`-Volume an und füllt sie mit
+allen 85 Werten. Danach in der Weboberfläche unter **Einstellungen**:
+
+1. **IP des Wechselrichters** eintragen (meist `espressif`; sonst die IP des WLAN-Sticks).
+2. **Übertragungsart** und **Miniserver-IP** eintragen.
+3. Optional ein **Präfix** wie `mtec_` setzen, damit die Eingänge im Miniserver zusammenstehen.
+
+Auf der Seite **Werte** lässt sich anschließend abwählen, was nicht gebraucht wird – weniger
+Werte heißt weniger virtuelle Eingänge im Miniserver.
+
+---
+
+## Loxone einrichten
+
+Die Seite **Loxone** in der Weboberfläche fasst alles zusammen und bietet die passenden
+Vorlagen zum Download an. Kurzfassung:
+
+### Variante 1 – UDP-Push (empfohlen)
+
+Der Container schickt jeden Wert als eigenes UDP-Paket `name: wert` an den Miniserver.
+Kein Login nötig, minimale Last, Werte sind sofort da.
+
+1. In Loxone Config einen **Virtuellen UDP-Eingang** anlegen (z. B. Port `7000`).
+2. In der Weboberfläche unter **Loxone** die UDP-Vorlage herunterladen und in Loxone Config
+   einfügen – damit sind alle Eingänge inklusive Befehlserkennung und Einheit angelegt.
+3. Unter **Einstellungen** den Modus `udp`, die Miniserver-IP und denselben Port eintragen.
+
+Die Befehlserkennung je Wert lautet `name: \v`.
+
+### Variante 2 – HTTP-Push an virtuelle Eingänge
+
+Der Container ruft je Wert `http://<miniserver>/dev/sps/io/<name>/<wert>` auf. Braucht einen
+Benutzer mit Schreibrechten und erzeugt deutlich mehr Last als UDP – sinnvoll, wenn UDP im
+Netz nicht erwünscht ist.
+
+### Variante 3 – REST-Pull (wie Simple-API in ioBroker)
+
+Loxone holt sich die Werte per **Virtuellem HTTP-Eingang** selbst ab. Diese Schnittstelle ist
+immer aktiv, auch wenn der Push auf `off` steht. Die passende Vorlage enthält bereits die
+richtige Adresse und die Befehlserkennung `"name":\v`.
+
+> **Textwerte** (Seriennummer, Datum, Firmware-Version) lassen sich nicht als analoger
+> virtueller Eingang abbilden und sind deshalb nicht in den Vorlagen enthalten. Über die
+> REST-Schnittstelle stehen sie trotzdem zur Verfügung.
+
+---
+
+## Weboberfläche
+
+| Seite | Inhalt |
+|-------|--------|
+| **Dashboard** | Live-Werte, Status von Modbus/Loxone/Watchdog, Buttons für „jetzt abfragen“, „alles senden“, „neu verbinden“ |
+| **Werte** | Alle 85 Werte: senden ja/nein, Loxone-Name, Nachkommastellen, Totband; warnt bei doppelten Namen |
+| **Loxone** | Anleitung für alle drei Varianten, Download der Loxone-Config-Vorlagen, Testwert senden |
+| **Einstellungen** | Modbus, Loxone, Intervalle, Watchdog, Web-Login, MQTT, Logging |
+| **Log** | Die letzten Meldungen aus dem Container, filterbar nach Level und Text |
+
+Änderungen an den Einstellungen werden in die `config.yaml` geschrieben und sofort übernommen –
+ein Neustart ist nur nötig, wenn Bind-Adresse oder Port der Weboberfläche geändert werden.
+
+### Nur bei Änderung senden
+
+Standardmäßig geht ein Wert erst wieder raus, wenn er sich geändert hat. Das hält die Last auf
+dem Miniserver niedrig. Zwei Stellschrauben:
+
+* **Totband** (je Wert): erst senden, wenn sich der Wert um mindestens X geändert hat – praktisch
+  bei zappelnden Leistungswerten.
+* **Heartbeat** (global): unveränderte Werte trotzdem alle N Sekunden erneut senden, damit der
+  Miniserver nach einem Neustart nicht auf alten Werten sitzenbleibt.
+
+---
+
+## Konfiguration
+
+Alle Einstellungen liegen in `/config/config.yaml` und lassen sich komplett über die
+Weboberfläche pflegen. Für die Erstinbetriebnahme (oder eine reine Umgebungsvariablen-Konfiguration)
+gibt es Environment-Overrides:
+
+| Variable | Bedeutung | Default |
+|----------|-----------|---------|
+| `LOXMTEC_CONFIG` | Pfad zur config.yaml | `/config/config.yaml` |
+| `LOXMTEC_MODBUS_HOST` | IP/Hostname des Wechselrichters | `espressif` |
+| `LOXMTEC_MODBUS_PORT` | Modbus-Port (Firmware < V27.52.4.0) | `5743` |
+| `LOXMTEC_MODBUS_PORT_FALLBACK` | Ausweich-Port (Firmware > V27.52.4.0) | `502` |
+| `LOXMTEC_MODBUS_SLAVE` | Modbus-Slave-ID | `252` |
+| `LOXMTEC_POLL_NOW` | Abfrage-Intervall der aktuellen Werte (s) | `10` |
+| `LOXMTEC_LOXONE_MODE` | `udp`, `http` oder `off` | `udp` |
+| `LOXMTEC_LOXONE_HOST` | IP/Hostname des Miniservers | – |
+| `LOXMTEC_LOXONE_UDP_PORT` | Port des virtuellen UDP-Eingangs | `7000` |
+| `LOXMTEC_LOXONE_HTTP_PORT` | Port des Miniservers (HTTP-Push) | `80` |
+| `LOXMTEC_LOXONE_USER` / `..._PASSWORD` | Zugangsdaten für HTTP-Push | `admin` / – |
+| `LOXMTEC_LOXONE_PREFIX` | Präfix für alle Loxone-Namen | – |
+| `LOXMTEC_WEB_PORT` | Port der Weboberfläche | `8080` |
+| `LOXMTEC_WEB_USER` / `..._PASSWORD` | Login für Weboberfläche und REST-API | – |
+| `LOXMTEC_MQTT_ENABLED` | zusätzliche MQTT-Ausgabe | `false` |
+| `LOXMTEC_LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR` | `INFO` |
+
+Umgebungsvariablen haben Vorrang vor der `config.yaml`. Wer eine Einstellung dauerhaft über die
+Weboberfläche pflegen will, sollte die passende Variable also wieder aus der Compose-Datei nehmen.
+
+### Passwörter
+
+Die Passwörter für Miniserver und Weboberfläche stehen im Klartext in der `config.yaml` – so wie
+bei den meisten Bridges dieser Art. Der Ordner sollte deshalb nicht öffentlich freigegeben werden.
+In der Weboberfläche und über die REST-Schnittstelle werden sie nie ausgeliefert, sondern durch
+`********` ersetzt.
+
+---
+
+## REST-Schnittstelle
+
+| Endpunkt | Antwort |
+|----------|---------|
+| `GET /api/v1/values` | alle Werte als flaches JSON – das, was Loxone im Pull-Betrieb abfragt |
+| `GET /api/v1/values/full` | Werte inklusive Name, Einheit, Gruppe, Alter, letztem Versand |
+| `GET /api/v1/value/<name>` | ein einzelner Wert als reiner Text |
+| `GET /api/v1/status` | Status von Modbus, Loxone, Watchdog und MQTT |
+| `GET /api/v1/config` | aktuelle Konfiguration (ohne Passwörter) |
+| `POST /api/v1/config` | Einstellungen ändern |
+| `GET`/`POST` `/api/v1/mapping` | Zuordnung der Werte lesen/schreiben |
+| `POST /api/v1/actions/{poll,resend,reconnect,test}` | Aktionen auslösen |
+| `GET /api/v1/loxone-template/{udp,http}` | Loxone-Config-Vorlage als XML |
+| `GET /healthz` | Health-Check: `200` wenn aktuelle Daten vorliegen, sonst `503` |
+
+Ist ein Web-Login gesetzt, gilt er für alle Endpunkte außer `/healthz`. Loxone fragt dann
+`http://benutzer:passwort@host:8080/api/v1/values` ab.
+
+---
+
+## Watchdog und Health-Check
+
+Der Watchdog prüft alle 10 Sekunden, ob noch Daten kommen:
+
+1. Läuft alles → nichts passiert.
+2. Seit `stale_after` Sekunden (Standard 120) keine erfolgreiche Abfrage → Modbus-Reconnect.
+3. Seit `exit_after` Sekunden (Standard 900) immer noch nichts, oder der Poller-Thread ist
+   gestorben → der Prozess beendet sich mit Exit-Code 1 und Docker startet den Container neu
+   (`restart: unless-stopped`).
+
+Zusätzlich prüft der Docker-`HEALTHCHECK` alle 60 Sekunden `/healthz`. Direkt nach dem Start gibt
+es eine Schonfrist, damit ein langsam anlaufender Wechselrichter den Container nicht sofort auf
+„unhealthy“ setzt.
+
+---
+
+## Entwicklung
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[test]"
+pytest                       # 67 Tests, inkl. simuliertem Wechselrichter
+loxmtec -c ./config.yaml     # lokal starten
+```
+
+Die Tests brauchen keine Hardware: `tests/fake_inverter.py` ist ein minimaler
+Modbus-RTU-over-TCP-Server, gegen den der komplette Weg vom Register bis zum UDP-Paket
+durchgespielt wird.
+
+Aufbau des Pakets:
+
+| Modul | Aufgabe |
+|-------|---------|
+| `loxmtec/modbus.py` | Modbus-Client, Register-Clustering, Dekodierung |
+| `loxmtec/calc.py` | berechnete Werte (Hausverbrauch, Autarkie, Eigenverbrauch) |
+| `loxmtec/datastore.py` | aktuelle Werte und Statuszähler |
+| `loxmtec/mapping.py` | Zuordnung Register → Loxone-Name |
+| `loxmtec/loxone/` | UDP-/HTTP-Transport, Änderungserkennung, Vorlagen-Export |
+| `loxmtec/poller.py` | der Takt: lesen, rechnen, speichern, senden |
+| `loxmtec/watchdog.py` | Überwachung und Neustart |
+| `loxmtec/web/` | Weboberfläche und REST-API |
+
+---
+
+## Original project: MTECmqtt
+
+### Introduction
 Welcome to the `MTECmqtt` project!
 
 This project enables to read data from a M-TEC Energybutler (https://www.mtec-systems.com) system and write them to a MQTT broker. 
@@ -19,19 +296,19 @@ The highlights are:
 
 I hope you like it and it will help you with for your EMS or home automation project :-) !
 
-### Disclaimer 
+#### Disclaimer 
 This project is a pure hobby project which I created by reverse-engineering different internet sources and my M-TEC Energybutler. It is *not* related to or supported by M-TEC GmbH by any means. 
 
 Usage is completely on you own risk. I don't take any responsibility on functionality or potential damage.
 
-### Credits
+#### Credits
 This project would not have been possible without the really valuable pre-work of other people, especially: 
 * https://www.photovoltaikforum.com/thread/206243-erfahrungen-mit-m-tec-energy-butler-hybrid-wechselrichter
 * https://forum.iobroker.net/assets/uploads/files/1681811699113-20221125_mtec-energybutler_modbus_rtu_protkoll.pdf
 * https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 * The Home Assistant "blue theme" background was thankfully provided by Enrico from redK! Webdesign & Content Management
 
-### Compatibility
+#### Compatibility
 The project was developed using my `M-TEC Energybutler 8kW-3P-3G25`, but I assume that it will also work with other Energybutler GEN3 versions (https://www.mtec-systems.com/batteriespeicher/energy-butler-11-bis-30-kwh/).
 
 It seems that there are at least three more Inverter products on the market which share the same (or at least a very similar) Chinese firmware. It *might* be that this API also works with these products. But since I do not have access to any of them, this is just a guess and up to you and your own risk to try it.
@@ -43,8 +320,8 @@ It seems that there are at least three more Inverter products on the market whic
 | Daxtromn  | https://daxtromn-power.com/products/ |
 
 
-## Setup & configuration
-### Prerequisites
+### Setup & configuration
+#### Prerequisites
 The MTECmqtt project connects to the espressif Modbus server of you M-TEC inverter, retrieves relevant data, and writes them to a MQTT broker (https://mqtt.org/) of your choice. MQTT provides a light-weight publish/subscribe model which is widely used for Internet of Things messaging. MQTT connectivity is implemented in many EMS or home automation tools. 
 That means, you obviously require a MQTT server. 
 If you don't have one yet, you might want to try https://mosquitto.org/. 
@@ -54,7 +331,7 @@ You can easily install it like this:
 sudo apt install mosquitto mosquitto-clients
 ```
 
-### Installation
+#### Installation
 The basic installation requires only following 4 steps:
 
 (1) Check your Python installation
@@ -112,13 +389,13 @@ To check if the service is running smoothly, you can execute:
 sudo systemctl status mtec_mqtt
 ```
 
-### Advanced configuration 
+#### Advanced configuration 
 This section give you more information about all configuration options. But don't be afraid - it should only be relevant for advanced use cases.
 
 The installer will create a `config.yaml` file in the default location of your OS.
 For a Linux system it's probably `~/.config/mtecmqtt/config.yaml`, on Windowns something like `C:\Users\xxxxx\AppData\Roaming\config.yaml`
 
-#### Connect your M-TEC Inverter
+##### Connect your M-TEC Inverter
 In order to connect to your Inverter, you need the IP address or internal hostname of your `espressif` device. 
 If you run a FRITZ!Box, the pre-configured internal hostname `espressif.fritz.box` will probably already work out-of-the-box.
 Else you can easily adjust it like this: 
@@ -132,7 +409,7 @@ You probably don't need to change any of the other `MODBUS_` config values.
 _IMPORTANT:_ M-TEC changed their Modbus port with firmware V27.52.4.0. If you run that version or a newer one, you need to change the `MODBUS_PORT` in the `config.yaml` to 502 !  
 
 ```
-# MODBUS Server
+## MODBUS Server
 MODBUS_IP : espressif.fritz.box    # IP address / hostname of "espressif" modbus server
 MODBUS_PORT : 5743                 # Port (IMPORTANT: you need to change this to 502 for firmware versions newer than 27.52.4.0) 
 MODBUS_SLAVE : 252                 # Modbus slave id (usually no change required)
@@ -142,7 +419,7 @@ MODBUS_FRAMER: rtu                 # Modbus Framer (usually no change required; 
 
 Hint for advanced users: If you run an external modbus adapter, connected e.g. to the EMS bus of the MTEC inverter, you might require to change the `MODBUS_FRAMER`.   
 
-#### Connect you MQTT broker
+##### Connect you MQTT broker
 The `MQTT_` parameters in `config.yaml` define the connection to your MQTT server.
 
 ```
@@ -157,7 +434,7 @@ The other values of the `config.yaml` you probably don't need to change as of no
 
 That's already all you need to do and you are ready to go!
 
-#### More configuration options
+##### More configuration options
 The `REFRESH_` parameters define how frequently the data gets fetched from your Inverter
 
 ```
@@ -167,13 +444,13 @@ REFRESH_TOTAL   : 300         # Refresh total statistic every N seconds
 REFRESH_CONFIG  : 3600        # Refresh config data every N seconds
 ``` 
 
-### Home Assistant support
+#### Home Assistant support
 `mtec_mqtt` provides Home Assistant (https://www.home-assistant.io) auto-discovery, which means that Home Assistant will automatically detect and configure your MTEC Inverter. 
 
 If you want to enable Home Assistant support, set `HASS_ENABLE: True` in `config.yaml`. 
 
 ```
-# Home Assistent
+## Home Assistent
 HASS_ENABLE : True                # Enable home assistant support
 HASS_BASE_TOPIC : homeassistant   # Basis MQTT topic of home assistant
 HASS_BIRTH_GRACETIME : 15         # Give HASS some time to get ready after the birth message was received
@@ -190,11 +467,11 @@ There are two versions you can chose from:
 | Dark theme  | hass-dashboard.yaml          | PV_background.png
 | Blue theme  | hass-dashboard-blue.yaml     | PV_background-blue.png
 
-### evcc support
+#### evcc support
 If you want to integrate the data into evcc (https://evcc.io), you might want to have a look at the `evcc.yaml` snippet in the `templates` directory. It shows how to define and use the MTEC `meters`, provided in MQTT.
 Please don't forget to replace `<MTEC_SERIAL_NO>` with the actual serial no of your Inverter.
 
-## Data format written to MQTT
+### Data format written to MQTT
 The exported data will be written to several MQTT topics. The topic path includes the serial number of your Inverter.
  
 | Sub-topic                         | Refresh frequency            |  Description 
@@ -224,7 +501,7 @@ Battery -------    |                --------- house
 
 *Remark:* Some parameters - marked by `(*)` - are calculated values. 
 
-### config
+#### config
 | Register | MQTT Parameter          | Unit | Description 
 | -------- | ----------------------  | ---- | ---------------------------------------------- 
 | 10000    | serial_no               |      | Inverter serial number
@@ -237,7 +514,7 @@ Battery -------    |                --------- house
 | 52505    | off_grid_soc_limit      | %    | Off-grid SOC limit
 |          | api_date                |      | Local date of MTECmqtt server
 
-### now-base
+#### now-base
 | Register | MQTT Parameter          | Unit | Description 
 | -------- | ----------------------  | ---- | ---------------------------------------------- 
 | 10100    | inverter_date           |      | Inverter date
@@ -254,7 +531,7 @@ Battery -------    |                --------- house
 | 50000    | mode                    |      | Inverter operation mode (257=General mode, 258=Economic mode, 259=UPS mode, 512=Off grid 771=Manual mode)
 |          | consumption             | W    | Household consumption (*)
 
-### now-backup
+#### now-backup
 | Register | MQTT Parameter          | Unit | Description 
 | -------- | ----------------------  | ---- | ---------------------------------------------- 
 | 30200    | backup_voltage_a        | V    | Backup voltage phase A
@@ -270,7 +547,7 @@ Battery -------    |                --------- house
 | 30222    | backup_frequency_c      | Hz   | Backup frequency phase C
 | 30224    | backup_c                | W    | Backup power phase C
 
-### now-battery
+#### now-battery
 | Register | MQTT Parameter          | Unit | Description 
 | -------- | ----------------------  | ---- | ---------------------------------------------- 
 | 33001    | battery_soh             | %    | Battery SOH
@@ -280,7 +557,7 @@ Battery -------    |                --------- house
 | 33013    | battery_cell_v_max      | V    | Battery cell voltage max.
 | 33015    | battery_cell_v_min      | V    | Battery cell voltage min.
 
-### now-grid
+#### now-grid
 | Register | MQTT Parameter          | Unit | Description 
 | -------- | ----------------------  | ---- | ---------------------------------------------- 
 | 10994    | grid_a                  | W    | Grid power phase A
@@ -297,7 +574,7 @@ Battery -------    |                --------- house
 | 11014    | ac_current_c            | A    | Inverter AC current phase C
 | 11015    | ac_fequency             | Hz   | Inverter AC frequency
 
-### now-inverter
+#### now-inverter
 | Register | MQTT Parameter          | Unit | Description 
 | -------- | ----------------------  | ---- | ---------------------------------------------- 
 | 11032    | inverter_temp1          | ℃  | Temperature Sensor 1
@@ -308,7 +585,7 @@ Battery -------    |                --------- house
 | 30242    | inverter_b              | W   | Inverter power phase B
 | 30248    | inverter_c              | W   | Inverter power phase C
 
-### now-pv
+#### now-pv
 | Register | MQTT Parameter          | Unit | Description 
 | -------- | ----------------------  | ---- | ---------------------------------------------- 
 | 11022    | pv_generation_duration  | h    | PV generation time total
@@ -319,7 +596,7 @@ Battery -------    |                --------- house
 | 11062    | pv_1                    | W    | PV1 power
 | 11064    | pv_2                    | W    | PV2 power
 
-### day
+#### day
 | Register | MQTT Parameter          | Unit | Description 
 | -------- | ----------------------  | ---- | ---------------------------------------------- 
 | 31000    | grid_feed_day           | kWh  | Grid injection energy (day)
@@ -332,7 +609,7 @@ Battery -------    |                --------- house
 |          | consumption_day         | kWh  | Household energy consumed (day) (*)
 |          | own_consumption_day     | %    | Own consumption rate (day) (*)
 
-### total
+#### total
 | Register | MQTT Parameter             | Unit | Description 
 | -------- | ----------------------     | ---- | ---------------------------------------------- 
 | 31102    | grid_feed_total            | kWh  | Grid energy injected (total)
@@ -346,9 +623,9 @@ Battery -------    |                --------- house
 |          | own_consumption_total      | %    | Own consumption rate (total) (*)
 
 
-## What else you can find in the project?
+### What else you can find in the project?
 
-### Modbus Utility
+#### Modbus Utility
 `mtec_util` is an small inteative tool which enable to list the supported parameters and read and write registers of your Inverter.
 You can choose between:
 
@@ -368,7 +645,7 @@ You can choose between:
 
 (5) enables you to write a value to a register of your Inverter. WARNING: Be careful when writing data to your Inverter! This is definitively at your own risk!
 
-### Commandline export tool
+#### Commandline export tool
 The command-line tool `mtec_export` offers functionality to read data from your Inverter using Modbus and export it in various combinations and formats.
 
 As default, it will connect to your device and retrieve a list of all known Modbus registers in a human readable format.

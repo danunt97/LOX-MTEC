@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}LOX-MTEC{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#9889;</text></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">LOX<span>-</span>MTEC <small>v{{ version }}</small></a>
+    <nav>
+      <a href="/" class="{{ 'active' if page == 'dashboard' }}">Dashboard</a>
+      <a href="/values" class="{{ 'active' if page == 'values' }}">Werte</a>
+      <a href="/loxone" class="{{ 'active' if page == 'loxone' }}">Loxone</a>
+      <a href="/settings" class="{{ 'active' if page == 'settings' }}">Einstellungen</a>
+      <a href="/log" class="{{ 'active' if page == 'log' }}">Log</a>
+    </nav>
+    <span class="spacer"></span>
+    <span class="pill unknown" id="pill-modbus">Modbus</span>
+    <span class="pill unknown" id="pill-loxone">Loxone</span>
+    <span class="pill unknown" id="pill-watchdog">Watchdog</span>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <div id="toast"></div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script>
+    /* The status pills in the header are refreshed on every page. */
+    async function refreshPills() {
+      const status = await LX.get("/api/v1/status");
+      LX.pill(document.getElementById("pill-modbus"), status.modbus.state, "Modbus: " + status.modbus.state);
+      LX.pill(document.getElementById("pill-loxone"), status.loxone.state, "Loxone: " + status.loxone.state);
+      LX.pill(document.getElementById("pill-watchdog"), status.watchdog.state, "Watchdog: " + status.watchdog.state);
+      window.dispatchEvent(new CustomEvent("lx-status", { detail: status }));
+    }
+    LX.poll(refreshPills, 5000);
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

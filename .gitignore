@@ -11,3 +11,12 @@ __pycache__/
 .vscode/launch.json
 .vscode
 *.code-workspace
+# LOX-MTEC
+/config/
+/config.yaml
+.venv/
+venv/
+.pytest_cache/
+dist/
+build/
+*.egg-info/

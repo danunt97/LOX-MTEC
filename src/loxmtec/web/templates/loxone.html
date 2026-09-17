@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Loxone - LOX-MTEC{% endblock %}
+
+{% block content %}
+<h1>Anbindung an Loxone</h1>
+<p class="hint">
+  Drei Wege stehen zur Auswahl. Sie schließen sich nicht aus: der Push-Modus wird in den
+  Einstellungen gewählt, die REST-Schnittstelle läuft immer mit.
+</p>
+
+<div class="grid two">
+  <div class="card">
+    <h3>1 · UDP-Push (empfohlen)</h3>
+    <p>Der Container schickt jeden Wert als eigenes UDP-Paket <code>name: wert</code> an den
+       Miniserver. Kein Login, minimale Last, sofortige Aktualisierung.</p>
+    <ol class="steps">
+      <li>In Loxone Config: <b>Virtueller UDP-Eingang</b> anlegen, Port z.&nbsp;B. <code>7000</code>.</li>
+      <li>Unten die Vorlage herunterladen und in Loxone Config einfügen - damit sind alle
+          Eingänge inklusive Befehlserkennung und Einheit angelegt.</li>
+      <li>In den <a href="/settings">Einstellungen</a> Modus <code>udp</code>, Miniserver-IP und denselben Port eintragen.</li>
+    </ol>
+    <p class="hint">Befehlserkennung je Wert: <code>name: \v</code></p>
+    <div class="toolbar">
+      <a class="btn primary" href="/api/v1/loxone-template/udp">Vorlage herunterladen</a>
+      <a class="btn" href="/api/v1/loxone-template/udp?all=1">inkl. deaktivierter Werte</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>2 · HTTP-Push an virtuelle Eingänge</h3>
+    <p>Der Container ruft je Wert <code>/dev/sps/io/&lt;name&gt;/&lt;wert&gt;</code> am Miniserver auf.
+       Braucht einen Benutzer mit Schreibrechten und erzeugt deutlich mehr Last als UDP.</p>
+    <ol class="steps">
+      <li>Je Wert einen <b>virtuellen Eingang</b> im Miniserver anlegen; der Name muss dem
+          Loxone-Namen auf der Seite <a href="/values">Werte</a> entsprechen.</li>
+      <li>In den <a href="/settings">Einstellungen</a> Modus <code>http</code>, IP, Benutzer und Passwort eintragen.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3>3 · REST-Pull (wie Simple-API in ioBroker)</h3>
+    <p>Loxone holt sich die Werte selbst per <b>Virtuellem HTTP-Eingang</b>. Diese Schnittstelle
+       ist immer aktiv - auch wenn der Push auf <code>off</code> steht.</p>
+    <ol class="steps">
+      <li>Vorlage herunterladen und in Loxone Config einfügen; die Adresse ist bereits eingetragen.</li>
+      <li>Abfrage-Intervall im virtuellen HTTP-Eingang nach Bedarf anpassen.</li>
+    </ol>
+    <div class="toolbar">
+      <a class="btn primary" id="tpl-http" href="/api/v1/loxone-template/http">Vorlage herunterladen</a>
+    </div>
+    <p class="hint">Befehlserkennung je Wert: <code>"name":\v</code></p>
+  </div>
+
+  <div class="card">
+    <h3>Endpunkte</h3>
+    <table>
+      <tbody>
+        <tr><td class="mono">/api/v1/values</td><td>alle Werte als flaches JSON</td></tr>
+        <tr><td class="mono">/api/v1/values/full</td><td>Werte inkl. Name, Einheit, Gruppe, Alter</td></tr>
+        <tr><td class="mono">/api/v1/value/&lt;name&gt;</td><td>ein einzelner Wert als reiner Text</td></tr>
+        <tr><td class="mono">/api/v1/status</td><td>Status von Modbus, Loxone und Watchdog</td></tr>
+        <tr><td class="mono">/healthz</td><td>Health-Check (200 / 503) für Docker</td></tr>
+      </tbody>
+    </table>
+    <p class="hint" style="margin-top:12px">Basis-URL dieser Instanz: <code id="base-url"></code></p>
+  </div>
+
+  <div class="card">
+    <h3>Hinweise</h3>
+    <ul>
+      <li>Textwerte (Seriennummer, Datum, Firmware) lassen sich nicht als analoger virtueller
+          Eingang abbilden und sind deshalb nicht in den Vorlagen enthalten. Über die REST-Schnittstelle
+          sind sie trotzdem verfügbar.</li>
+      <li>UDP ist verbindungslos: der Container merkt nicht, ob der Miniserver das Paket bekommen hat.
+          Ob Werte ankommen, siehst du am schnellsten im UDP-Monitor von Loxone Config.</li>
+      <li>Ist in den Einstellungen ein Web-Login gesetzt, gilt er auch für die REST-Schnittstelle.
+          Loxone muss dann <code>http://benutzer:passwort@host:port/api/v1/values</code> abfragen.</li>
+    </ul>
+    <div class="toolbar">
+      <button data-action="/api/v1/actions/resend" data-label="Alle Werte gesendet">Alle Werte jetzt senden</button>
+      <button data-action="/api/v1/actions/test" data-label="Testwert gesendet">Testwert senden</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const base = `${location.protocol}//${location.host}`;
+  document.getElementById("base-url").textContent = base;
+  document.getElementById("tpl-http").href =
+    `/api/v1/loxone-template/http?url=${encodeURIComponent(base + "/api/v1/values")}`;
+</script>
+{% endblock %}

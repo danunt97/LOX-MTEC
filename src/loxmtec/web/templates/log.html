@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Log - LOX-MTEC{% endblock %}
+
+{% block content %}
+<h1>Log</h1>
+<p class="hint">Die letzten Meldungen aus dem laufenden Container. Für mehr Details das Level in
+  den <a href="/settings">Einstellungen</a> auf <code>DEBUG</code> setzen.</p>
+
+<div class="toolbar">
+  <select id="level" style="max-width:180px">
+    <option value="">Alle Level</option>
+    <option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option>
+  </select>
+  <input id="filter" placeholder="Filtern" style="max-width:280px">
+  <div class="field inline" style="margin:0"><input type="checkbox" id="follow" checked><label for="follow">Automatisch scrollen</label></div>
+  <span class="spacer"></span>
+  <button id="clear">Leeren</button>
+</div>
+
+<div id="log"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  let since = 0;
+  let entries = [];
+
+  const LEVEL_ORDER = { DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3, CRITICAL: 4 };
+
+  function render() {
+    const minimum = document.getElementById("level").value;
+    const needle = document.getElementById("filter").value.toLowerCase();
+    const host = document.getElementById("log");
+    const visible = entries.filter((entry) => {
+      if (minimum && LEVEL_ORDER[entry.level] < LEVEL_ORDER[minimum]) return false;
+      if (needle && !`${entry.logger} ${entry.message}`.toLowerCase().includes(needle)) return false;
+      return true;
+    });
+    host.innerHTML = visible.map((entry) =>
+      `<div class="log-line log-${entry.level}"><span class="log-ts">${entry.ts}</span>${escapeHtml(entry.message)}</div>`
+    ).join("");
+    if (document.getElementById("follow").checked) host.scrollTop = host.scrollHeight;
+  }
+
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[char]));
+  }
+
+  async function refresh() {
+    const data = await LX.get(`/api/v1/log?since=${since}`);
+    if (data.entries.length) {
+      entries = entries.concat(data.entries).slice(-2000);
+      since = data.entries[data.entries.length - 1].id;
+      render();
+    }
+  }
+
+  document.getElementById("level").onchange = render;
+  document.getElementById("filter").oninput = render;
+  document.getElementById("clear").onclick = async () => {
+    await LX.send("/api/v1/log", undefined, "DELETE");
+    entries = [];
+    since = 0;
+    render();
+  };
+
+  LX.poll(refresh, 3000);
+</script>
+{% endblock %}

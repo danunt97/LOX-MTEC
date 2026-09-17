@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - LOX-MTEC{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+<p class="hint">Live-Werte des Wechselrichters und Status der Übertragung nach Loxone.</p>
+
+<div class="toolbar">
+  <button data-action="/api/v1/actions/poll" data-label="Abfrage angestoßen">Jetzt abfragen</button>
+  <button data-action="/api/v1/actions/resend" data-label="Alle Werte gesendet">Alle Werte senden</button>
+  <button data-action="/api/v1/actions/reconnect" data-label="Reconnect">Modbus neu verbinden</button>
+</div>
+
+<div class="grid cards" id="tiles"></div>
+
+<h2 style="margin-top:22px">Status</h2>
+<div class="grid two">
+  <div class="card">
+    <h3>Modbus</h3>
+    <div id="s-modbus" class="sub"></div>
+  </div>
+  <div class="card">
+    <h3>Loxone</h3>
+    <div id="s-loxone" class="sub"></div>
+  </div>
+  <div class="card">
+    <h3>Watchdog &amp; System</h3>
+    <div id="s-system" class="sub"></div>
+  </div>
+  <div class="card">
+    <h3>Letzte Gruppen-Abfragen</h3>
+    <div id="s-groups" class="sub"></div>
+  </div>
+</div>
+
+<h2 style="margin-top:22px">Alle Werte</h2>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th><th>Kennung</th><th class="num">Wert</th><th>Einheit</th>
+        <th>Gruppe</th><th class="num">Alter</th><th>zuletzt gesendet</th>
+      </tr>
+    </thead>
+    <tbody id="values-body"></tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  /* Headline tiles: the values most people want to see at a glance. */
+  const TILES = [
+    { short: "pv", label: "PV-Leistung", decimals: 0 },
+    { short: "consumption", label: "Hausverbrauch", decimals: 0 },
+    { short: "grid_power", label: "Netz", decimals: 0 },
+    { short: "battery", label: "Batterie", decimals: 0 },
+    { short: "battery_soc", label: "Ladestand", decimals: 1 },
+    { short: "pv_day", label: "PV heute", decimals: 2 },
+  ];
+
+  function renderTiles(values) {
+    const host = document.getElementById("tiles");
+    host.innerHTML = "";
+    for (const tile of TILES) {
+      const entry = values.find((item) => item.short === tile.short);
+      if (!entry) continue;
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `<h3>${tile.label}</h3>
+        <div class="metric">${LX.number(entry.value, tile.decimals)}<small>${entry.unit || ""}</small></div>
+        <div class="sub">${entry.name}</div>`;
+      host.appendChild(card);
+    }
+  }
+
+  function renderTable(values) {
+    const body = document.getElementById("values-body");
+    body.innerHTML = values.map((entry) => `
+      <tr>
+        <td>${entry.name}</td>
+        <td class="mono">${entry.short}</td>
+        <td class="num mono">${typeof entry.value === "number" ? LX.number(entry.value, 2) : (entry.value ?? "-")}</td>
+        <td>${entry.unit || ""}</td>
+        <td><span class="tag">${entry.group || "-"}</span></td>
+        <td class="num">${LX.duration(entry.age)}</td>
+        <td class="mono">${entry.sent || "-"}</td>
+      </tr>`).join("");
+  }
+
+  async function refreshValues() {
+    const values = await LX.get("/api/v1/values/full");
+    renderTiles(values);
+    renderTable(values);
+  }
+
+  window.addEventListener("lx-status", (event) => {
+    const s = event.detail;
+    document.getElementById("s-modbus").innerHTML =
+      `<b>${s.modbus.message}</b><br>Letzter Erfolg: ${s.modbus.last_ok || "-"}
+       (${LX.duration(s.modbus.age)})<br>OK: ${s.modbus.reads_ok} · Fehler: ${s.modbus.reads_failed}
+       · Reconnects: ${s.modbus.reconnects}`;
+    document.getElementById("s-loxone").innerHTML =
+      `<b>${s.loxone.message}</b><br>${s.loxone.transport || ""}<br>
+       Gesendet: ${s.loxone.sent} · Fehler: ${s.loxone.failed}<br>
+       Letzter Erfolg: ${s.loxone.last_ok || "-"}`;
+    document.getElementById("s-system").innerHTML =
+      `Watchdog: <b>${s.watchdog.message}</b><br>Laufzeit: ${LX.duration(s.uptime)}<br>
+       Seriennummer: ${s.serial_no || "-"}<br>Werte im Speicher: ${s.values}<br>
+       MQTT: ${s.mqtt.state} (${s.mqtt.message})`;
+    document.getElementById("s-groups").innerHTML =
+      Object.entries(s.groups || {}).map(([group, ts]) => `${group}: <span class="mono">${ts}</span>`).join("<br>") || "-";
+  });
+
+  LX.poll(refreshValues, 5000);
+</script>
+{% endblock %}

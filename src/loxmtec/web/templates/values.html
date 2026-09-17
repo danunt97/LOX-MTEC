@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Werte - LOX-MTEC{% endblock %}
+
+{% block content %}
+<h1>Werte &amp; Loxone-Zuordnung</h1>
+<p class="hint">
+  Hier legst du fest, welcher Wert an Loxone geht und unter welchem Namen.
+  Der Name ist die Bezeichnung des virtuellen Eingangs im Miniserver
+  (bzw. der Schlüssel in der REST-Antwort). Das Präfix aus den Einstellungen wird
+  automatisch davorgesetzt.
+</p>
+
+<div id="dup-warning"></div>
+
+<div class="toolbar">
+  <input id="filter" placeholder="Filtern nach Name, Kennung oder Gruppe" style="max-width:320px">
+  <select id="group-filter" style="max-width:200px"><option value="">Alle Gruppen</option></select>
+  <button id="select-all">Alle aktivieren</button>
+  <button id="select-none">Alle deaktivieren</button>
+  <button id="select-visible">Sichtbare umschalten</button>
+  <span class="spacer"></span>
+  <span class="pill unknown" id="dirty-pill">keine Änderungen</span>
+  <button class="primary" id="save">Speichern</button>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:60px">Senden</th>
+        <th>Name</th>
+        <th>Kennung</th>
+        <th>Loxone-Name</th>
+        <th class="num" style="width:90px">Nachkomma</th>
+        <th class="num" style="width:110px">Totband</th>
+        <th class="num">Aktueller Wert</th>
+        <th style="width:110px">Gruppe</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  let rows = [];
+  let prefix = "";
+  const changed = new Map();
+
+  function markDirty(short, field, value) {
+    const entry = changed.get(short) || {};
+    entry[field] = value;
+    changed.set(short, entry);
+    const pill = document.getElementById("dirty-pill");
+    LX.pill(pill, "warn", `${changed.size} ungespeichert`);
+  }
+
+  function render() {
+    const needle = document.getElementById("filter").value.toLowerCase();
+    const group = document.getElementById("group-filter").value;
+    const body = document.getElementById("rows");
+    body.innerHTML = "";
+
+    for (const row of rows) {
+      if (group && row.group !== group) continue;
+      const haystack = `${row.name} ${row.short} ${row.group} ${row.target}`.toLowerCase();
+      if (needle && !haystack.includes(needle)) continue;
+
+      const tr = document.createElement("tr");
+      tr.dataset.short = row.short;
+      if (!row.enabled) tr.classList.add("off");
+      tr.innerHTML = `
+        <td><input type="checkbox" data-field="enabled" ${row.enabled ? "checked" : ""}></td>
+        <td>${row.name}${row.numeric ? "" : ' <span class="tag">Text</span>'}</td>
+        <td class="mono">${row.short}<br><span class="tag">${row.register}</span></td>
+        <td><input data-field="target" value="${row.target}"></td>
+        <td><input class="num" type="number" min="0" max="6" data-field="decimals" value="${row.decimals}"></td>
+        <td><input class="num" type="number" min="0" step="0.1" data-field="deadband" value="${row.deadband}"></td>
+        <td class="num mono">${row.value === null || row.value === undefined ? "-" : row.value} ${row.unit || ""}</td>
+        <td><span class="tag">${row.group || "-"}</span></td>`;
+      body.appendChild(tr);
+    }
+  }
+
+  document.getElementById("rows").addEventListener("change", (event) => {
+    const input = event.target;
+    const field = input.dataset.field;
+    if (!field) return;
+    const short = input.closest("tr").dataset.short;
+    const row = rows.find((item) => item.short === short);
+    let value;
+    if (field === "enabled") {
+      value = input.checked;
+      input.closest("tr").classList.toggle("off", !value);
+    } else if (field === "decimals") {
+      value = parseInt(input.value, 10) || 0;
+    } else if (field === "deadband") {
+      value = parseFloat(input.value) || 0;
+    } else {
+      value = input.value;
+    }
+    row[field] = value;
+    markDirty(short, field, value);
+  });
+
+  function setAll(enabled, visibleOnly = false) {
+    const visible = new Set(
+      [...document.querySelectorAll("#rows tr")].map((tr) => tr.dataset.short)
+    );
+    for (const row of rows) {
+      if (visibleOnly && !visible.has(row.short)) continue;
+      if (row.enabled === enabled) continue;
+      row.enabled = enabled;
+      markDirty(row.short, "enabled", enabled);
+    }
+    render();
+  }
+
+  document.getElementById("select-all").onclick = () => setAll(true);
+  document.getElementById("select-none").onclick = () => setAll(false);
+  document.getElementById("select-visible").onclick = () => {
+    const visible = [...document.querySelectorAll("#rows tr")].map((tr) => tr.dataset.short);
+    const allOn = visible.every((short) => rows.find((row) => row.short === short).enabled);
+    setAll(!allOn, true);
+  };
+
+  document.getElementById("filter").oninput = render;
+  document.getElementById("group-filter").onchange = render;
+
+  document.getElementById("save").onclick = async (event) => {
+    if (!changed.size) {
+      LX.toast("Keine Änderungen zu speichern");
+      return;
+    }
+    event.target.disabled = true;
+    try {
+      const payload = { values: Object.fromEntries(changed) };
+      const result = await LX.send("/api/v1/mapping", payload);
+      changed.clear();
+      LX.pill(document.getElementById("dirty-pill"), "ok", "gespeichert");
+      LX.toast("Zuordnung gespeichert - Werte werden neu gesendet", "ok");
+      showDuplicates(result.duplicates);
+      await load();
+    } catch (err) {
+      LX.toast(err.message, "error");
+    } finally {
+      event.target.disabled = false;
+    }
+  };
+
+  function showDuplicates(duplicates) {
+    const host = document.getElementById("dup-warning");
+    const entries = Object.entries(duplicates || {});
+    if (!entries.length) {
+      host.innerHTML = "";
+      return;
+    }
+    host.innerHTML = `<div class="errors"><b>Doppelte Loxone-Namen</b>
+      <ul>${entries.map(([target, shorts]) =>
+        `<li><code>${target}</code>: ${shorts.join(", ")}</li>`).join("")}</ul></div>`;
+  }
+
+  async function load() {
+    const data = await LX.get("/api/v1/mapping");
+    rows = data.rows;
+    prefix = data.prefix || "";
+    const select = document.getElementById("group-filter");
+    const previous = select.value;
+    select.innerHTML = '<option value="">Alle Gruppen</option>' +
+      data.groups.map((group) => `<option${group === previous ? " selected" : ""}>${group}</option>`).join("");
+    showDuplicates(data.duplicates);
+    render();
+  }
+
+  load();
+</script>
+{% endblock %}
