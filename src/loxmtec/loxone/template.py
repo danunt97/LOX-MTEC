@@ -74,16 +74,25 @@ _CMD_ORDER = [
 
 
 def unit_string(register: Register, mapping: ValueMapping) -> str:
-    """Loxone unit format, e.g. ``<v.1> W``."""
+    """Loxone unit format, e.g. ``<v.1> W``.
+
+    A unit configured on the mapping wins - a value scaled from W to kW has to
+    be labelled kW, not W.
+    """
     placeholder = f"<v.{mapping.decimals}>" if mapping.decimals > 0 else "<v>"
-    unit = (register.unit or "").strip()
+    unit = (mapping.unit or register.unit or "").strip()
     return f"{placeholder} {unit}".strip()
 
 
 def _exportable(
-    register_map: RegisterMap, mappings: dict[str, ValueMapping], only_enabled: bool = True
+    register_map: RegisterMap,
+    mappings: dict[str, ValueMapping],
+    only_enabled: bool = True,
+    include: set[str] | None = None,
 ) -> Iterable[tuple[Register, ValueMapping]]:
     for register in register_map.published():
+        if include is not None and register.short not in include:
+            continue
         mapping = mappings.get(register.short)
         if mapping is None:
             continue
@@ -92,6 +101,13 @@ def _exportable(
         if not register.is_numeric:
             continue
         yield register, mapping
+
+
+def _comment(register: Register, notes: dict[str, str] | None) -> str:
+    """Name the block input this value feeds, so the wiring is obvious in
+    Loxone Config."""
+    note = (notes or {}).get(register.short)
+    return f"{note} ({register.name})" if note else register.name
 
 
 def _add_info(root: ET.Element, template_type: int) -> None:
@@ -117,6 +133,8 @@ def udp_template(
     title: str = "LOX-MTEC",
     only_enabled: bool = True,
     template_type: int = TEMPLATE_TYPE_UDP,
+    include: set[str] | None = None,
+    notes: dict[str, str] | None = None,
 ) -> str:
     """Template for a 'Virtueller UDP Eingang' receiving the pushed values."""
     root = ET.Element(
@@ -130,13 +148,13 @@ def udp_template(
         },
     )
     _add_info(root, template_type)
-    for register, mapping in _exportable(register_map, mappings, only_enabled):
+    for register, mapping in _exportable(register_map, mappings, only_enabled, include):
         target = f"{prefix}{mapping.target}"
         attrs = dict(_COMMON_CMD_ATTRS)
         attrs.update(
             {
                 "Title": target,
-                "Comment": register.name,
+                "Comment": _comment(register, notes),
                 "Check": f"{target}: \\v",
                 "Unit": unit_string(register, mapping),
             }
@@ -154,6 +172,8 @@ def http_template(
     title: str = "LOX-MTEC",
     only_enabled: bool = True,
     template_type: int = TEMPLATE_TYPE_HTTP,
+    include: set[str] | None = None,
+    notes: dict[str, str] | None = None,
 ) -> str:
     """Template for a 'Virtueller HTTP Eingang' polling the container's REST API."""
     root = ET.Element(
@@ -167,13 +187,13 @@ def http_template(
         },
     )
     _add_info(root, template_type)
-    for register, mapping in _exportable(register_map, mappings, only_enabled):
+    for register, mapping in _exportable(register_map, mappings, only_enabled, include):
         target = f"{prefix}{mapping.target}"
         attrs = dict(_COMMON_CMD_ATTRS)
         attrs.update(
             {
                 "Title": target,
-                "Comment": register.name,
+                "Comment": _comment(register, notes),
                 # The REST API answers with flat JSON: {"pv": 1234.0, ...}
                 "Check": f'"{target}":\\v',
                 "Unit": unit_string(register, mapping),

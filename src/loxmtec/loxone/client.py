@@ -40,16 +40,17 @@ class LoxoneSettings:
 
 
 def format_value(raw: Any, mapping: ValueMapping, fallback_format: str = "{:.3f}") -> str:
-    """Render a value the way Loxone should receive it."""
+    """Render a value the way Loxone should receive it, factor applied."""
     if raw is None:
         return ""
     if isinstance(raw, bool):
         return "1" if raw else "0"
     if isinstance(raw, (int, float)):
+        value = mapping.scale(raw)
         try:
-            return f"{float(raw):.{int(mapping.decimals)}f}"
+            return f"{float(value):.{int(mapping.decimals)}f}"
         except (TypeError, ValueError):  # pragma: no cover - defensive
-            return fallback_format.format(float(raw))
+            return fallback_format.format(float(value))
     # Strings (serial number, dates, bit patterns) - keep them on one line so
     # that the UDP "<name>: <value>" framing stays intact.
     return " ".join(str(raw).split())
@@ -151,7 +152,9 @@ class LoxoneClient:
         raw: Any, last_raw: Any, last_text: str, text: str, mapping: ValueMapping
     ) -> bool:
         if mapping.deadband > 0 and isinstance(raw, (int, float)) and isinstance(last_raw, (int, float)):
-            return abs(float(raw) - float(last_raw)) >= mapping.deadband
+            # The deadband is expressed in the unit the user sees, i.e. after
+            # the factor has been applied.
+            return abs(float(mapping.scale(raw)) - float(mapping.scale(last_raw))) >= mapping.deadband
         return text != last_text
 
     def send(self, payloads: list[Payload]) -> SendResult:

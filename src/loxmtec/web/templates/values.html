@@ -8,6 +8,9 @@
   Der Name ist die Bezeichnung des virtuellen Eingangs im Miniserver
   (bzw. der Schlüssel in der REST-Antwort). Das Präfix aus den Einstellungen wird
   automatisch davorgesetzt.
+  Der <b>Faktor</b> rechnet vor dem Senden um: <code>0.001</code> macht aus W kW,
+  ein negativer Faktor dreht zusätzlich das Vorzeichen. Für den Energiemonitor-Baustein
+  stellt das die Vorlage oben automatisch ein.
 </p>
 
 <div id="dup-warning"></div>
@@ -18,6 +21,7 @@
   <button id="select-all">Alle aktivieren</button>
   <button id="select-none">Alle deaktivieren</button>
   <button id="select-visible">Sichtbare umschalten</button>
+  <select id="preset" style="max-width:260px"><option value="">Vorlage anwenden …</option></select>
   <span class="spacer"></span>
   <span class="pill unknown" id="dirty-pill">keine Änderungen</span>
   <button class="primary" id="save">Speichern</button>
@@ -31,6 +35,8 @@
         <th>Name</th>
         <th>Kennung</th>
         <th>Loxone-Name</th>
+        <th class="num" style="width:110px">Faktor</th>
+        <th style="width:80px">Einheit</th>
         <th class="num" style="width:90px">Nachkomma</th>
         <th class="num" style="width:110px">Totband</th>
         <th class="num">Aktueller Wert</th>
@@ -45,6 +51,7 @@
 {% block scripts %}
 <script>
   let rows = [];
+  let presets = [];
   let prefix = "";
   const changed = new Map();
 
@@ -60,7 +67,8 @@
   function formatValue(row) {
     if (row.value === null || row.value === undefined) return "-";
     if (typeof row.value !== "number") return row.value;
-    return LX.number(row.value, row.decimals);
+    const factor = Number(row.factor) || 1;
+    return LX.number(row.value * factor, row.decimals);
   }
 
   function render() {
@@ -82,9 +90,11 @@
         <td>${row.name}${row.numeric ? "" : ' <span class="tag">Text</span>'}</td>
         <td class="mono">${row.short}<br><span class="tag">${row.register}</span></td>
         <td><input data-field="target" value="${row.target}"></td>
+        <td><input class="num" type="number" step="any" data-field="factor" value="${row.factor}"></td>
+        <td><input data-field="unit_override" value="${row.unit_override || ""}" placeholder="${row.unit || ""}"></td>
         <td><input class="num" type="number" min="0" max="6" data-field="decimals" value="${row.decimals}"></td>
         <td><input class="num" type="number" min="0" step="0.1" data-field="deadband" value="${row.deadband}"></td>
-        <td class="num mono">${formatValue(row)} ${row.unit || ""}</td>
+        <td class="num mono">${formatValue(row)} ${row.unit_override || row.unit || ""}</td>
         <td><span class="tag">${row.group || "-"}</span></td>`;
       body.appendChild(tr);
     }
@@ -104,6 +114,8 @@
       value = parseInt(input.value, 10) || 0;
     } else if (field === "deadband") {
       value = parseFloat(input.value) || 0;
+    } else if (field === "factor") {
+      value = parseFloat(input.value) || 1;
     } else {
       value = input.value;
     }
@@ -134,6 +146,18 @@
 
   document.getElementById("filter").oninput = render;
   document.getElementById("group-filter").onchange = render;
+
+  document.getElementById("preset").onchange = async (event) => {
+    const key = event.target.value;
+    event.target.value = "";
+    if (!key) return;
+    const preset = presets.find((item) => item.key === key);
+    if (!confirm(`${preset.title}\n\n${preset.description}\n\nJetzt anwenden?`)) return;
+    await LX.action(`/api/v1/mapping/preset/${key}`, "Vorlage angewendet");
+    changed.clear();
+    LX.pill(document.getElementById("dirty-pill"), "ok", "gespeichert");
+    await load();
+  };
 
   document.getElementById("save").onclick = async (event) => {
     if (!changed.size) {
@@ -171,7 +195,11 @@
   async function load() {
     const data = await LX.get("/api/v1/mapping");
     rows = data.rows;
+    presets = data.presets || [];
     prefix = data.prefix || "";
+    document.getElementById("preset").innerHTML =
+      '<option value="">Vorlage anwenden …</option>' +
+      presets.map((p) => `<option value="${p.key}">${p.title}</option>`).join("");
     const select = document.getElementById("group-filter");
     const previous = select.value;
     select.innerHTML = '<option value="">Alle Gruppen</option>' +

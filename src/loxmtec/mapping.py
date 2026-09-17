@@ -55,13 +55,21 @@ def default_decimals(register: Register) -> int:
 
 @dataclass
 class ValueMapping:
-    """Settings of a single value."""
+    """Settings of a single value.
+
+    ``factor`` and ``unit`` exist because Loxone blocks expect their own units
+    and sign conventions - the Energiemonitor for instance wants kW instead of
+    W, and counts grid power positive on import while the inverter counts it
+    positive on export. A factor of -0.001 converts both in one step.
+    """
 
     short: str
     enabled: bool = True
     target: str = ""
     decimals: int = 2
     deadband: float = 0.0
+    factor: float = 1.0
+    unit: str = ""  # empty: use the register's own unit
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -69,7 +77,15 @@ class ValueMapping:
             "target": self.target,
             "decimals": int(self.decimals),
             "deadband": float(self.deadband),
+            "factor": float(self.factor),
+            "unit": self.unit,
         }
+
+    def scale(self, value: Any) -> Any:
+        """Apply the factor to a numeric value; anything else passes through."""
+        if self.factor == 1.0 or isinstance(value, bool) or not isinstance(value, (int, float)):
+            return value
+        return float(value) * self.factor
 
 
 def build_default(register: Register) -> ValueMapping:
@@ -101,6 +117,8 @@ def ensure_defaults(values: dict[str, Any], register_map: RegisterMap) -> dict[s
             target=sanitize_target(stored.get("target") or default.target, register.short),
             decimals=_as_int(stored.get("decimals"), default.decimals, 0, 6),
             deadband=_as_float(stored.get("deadband"), default.deadband),
+            factor=_as_factor(stored.get("factor"), default.factor),
+            unit=str(stored.get("unit") or "").strip()[:16],
         ).as_dict()
     return result
 
@@ -119,6 +137,8 @@ def load_mappings(values: dict[str, Any], register_map: RegisterMap) -> dict[str
             target=sanitize_target(stored.get("target") or register.short, register.short),
             decimals=_as_int(stored.get("decimals"), default_decimals(register), 0, 6),
             deadband=_as_float(stored.get("deadband"), 0.0),
+            factor=_as_factor(stored.get("factor"), 1.0),
+            unit=str(stored.get("unit") or "").strip()[:16],
         )
     return mappings
 
@@ -147,3 +167,15 @@ def _as_float(value: Any, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return max(0.0, number)
+
+
+def _as_factor(value: Any, default: float) -> float:
+    """Unlike the deadband a factor may be negative - that is how a sign gets
+    flipped. Zero would silence the value, so it falls back to the default."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number == 0.0:
+        return default
+    return number

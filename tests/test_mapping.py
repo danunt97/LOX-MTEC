@@ -52,6 +52,8 @@ def test_ensure_defaults_keeps_and_repairs_existing_entries(register_map):
         "target": "PV_Leistung",
         "decimals": 3,
         "deadband": 0.0,  # negative deadbands are clamped
+        "factor": 1.0,
+        "unit": "",
     }
     assert "gone_register" not in values  # stale entries are dropped
 
@@ -73,3 +75,22 @@ def test_duplicate_targets_only_reports_enabled_collisions(register_map):
 
     duplicates = duplicate_targets(mappings, prefix="mtec_")
     assert duplicates == {"mtec_same": ["consumption", "pv"]}
+
+
+def test_factor_may_be_negative_but_never_zero(register_map):
+    values = ensure_defaults(
+        {
+            "pv": {"factor": "-0.001"},
+            "grid_power": {"factor": 0},  # would silence the value
+            "battery": {"factor": "keine Zahl"},
+        },
+        register_map,
+    )
+    assert values["pv"]["factor"] == -0.001
+    assert values["grid_power"]["factor"] == 1.0
+    assert values["battery"]["factor"] == 1.0
+
+
+def test_unit_override_is_stored_and_trimmed(register_map):
+    values = ensure_defaults({"pv": {"unit": "  kW  "}}, register_map)
+    assert values["pv"]["unit"] == "kW"

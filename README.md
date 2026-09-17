@@ -187,6 +187,35 @@ Loxone holt sich die Werte per **Virtuellem HTTP-Eingang** selbst ab. Diese Schn
 immer aktiv, auch wenn der Push auf `off` steht. Die passende Vorlage enthält bereits die
 richtige Adresse und die Befehlserkennung `"name":\v`.
 
+### Energiemonitor-Baustein (Emo)
+
+Der Loxone-Energiemonitor erwartet die Werte in **kW** und mit eigenen Vorzeichen. Damit
+in Loxone keine Korrektur- oder Multiplizierer-Bausteine nötig sind, rechnet der Container
+das selbst um: auf der Seite **Loxone** einmal **„Werte einstellen"** klicken, dann die
+zugehörige Vorlage laden. Jeder virtuelle Eingang trägt danach als Kommentar den
+Baustein-Eingang, an den er gehört.
+
+| Emo-Eingang | Einheit | Wert | Umrechnung |
+|-------------|---------|------|------------|
+| `Ppwr` Produktionsleistung | kW | `pv` | W → kW |
+| `Gpwr` Netzleistung | kW | `grid_power` | W → kW, **Vorzeichen gedreht** |
+| `Spwr` Speicherleistung | kW | `battery` | W → kW |
+| `SoC` Ladezustand | % | `battery_soc` | unverändert |
+| `Ptot` Produktion gesamt | kWh | `pv_total` | unverändert |
+| `Gi` Netz Energie Import | kWh | `grid_purchase_total` | unverändert |
+| `Ge` Netz Energie Export | kWh | `grid_feed_total` | unverändert |
+
+Am Baustein selbst noch Datenquelle `Objekteingänge`, Parameter `Abs = 1` (der Container
+liefert Zählerstände, keine Zuwächse) und die Speicherkapazität des Akkus setzen.
+
+Das gedrehte Vorzeichen bei `Gpwr`: der Wechselrichter zählt Einspeisung positiv, der
+Energiemonitor den Netzbezug. Zum Prüfen: nachts ohne PV muss `Gpwr` positiv sein.
+
+Die Umrechnung ist nicht auf den Energiemonitor beschränkt — auf der Seite **Werte** hat
+jeder Wert einen **Faktor** und eine **Einheit**. `0.001` macht aus W kW, ein negativer
+Faktor dreht zusätzlich das Vorzeichen. So lassen sich auch die Zählerbausteine oder der
+Energieflussmonitor bedienen.
+
 > **Textwerte** (Seriennummer, Datum, Firmware-Version) lassen sich nicht als analoger
 > virtueller Eingang abbilden und sind deshalb nicht in den Vorlagen enthalten. Über die
 > REST-Schnittstelle stehen sie trotzdem zur Verfügung.

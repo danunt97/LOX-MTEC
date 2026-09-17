@@ -312,3 +312,75 @@ def test_basic_auth_protects_the_api_but_not_the_health_check(web):
 
     wrong = base64.b64encode(b"loxone:nope").decode()
     assert client.get("/api/v1/values", headers={"Authorization": f"Basic {wrong}"}).status_code == 401
+
+
+def test_preset_endpoint_configures_the_energiemonitor_values(web):
+    client, config, _store, _poller = web
+
+    result = client.post("/api/v1/mapping/preset/energiemonitor").get_json()
+    assert result["ok"] is True
+    assert len(result["applied"]) == 7
+
+    values = config.section("values")
+    assert values["pv"]["factor"] == 0.001
+    assert values["pv"]["unit"] == "kW"
+    assert values["grid_power"]["factor"] == -0.001
+
+    assert client.post("/api/v1/mapping/preset/nope").status_code == 404
+
+
+def test_preset_is_listed_and_survives_a_save(web):
+    client, config, *_ = web
+
+    listing = client.get("/api/v1/mapping").get_json()
+    assert any(p["key"] == "energiemonitor" for p in listing["presets"])
+
+    client.post("/api/v1/mapping/preset/energiemonitor")
+    # Editing an unrelated value must not reset the preset's factors.
+    client.post("/api/v1/mapping", json={"values": {"battery_soc": {"decimals": 2}}})
+    assert config.section("values")["pv"]["factor"] == 0.001
+
+
+def test_factor_reaches_the_wire(wired, config, register_map):
+    """The values page promises what Loxone receives - verify on the datagram."""
+    from loxmtec.mapping import ensure_defaults, load_mappings
+    from loxmtec.presets import apply_preset
+
+    poller, store, _fake, drain = wired
+    values, _ = apply_preset("energiemonitor", ensure_defaults(config.section("values"), register_map))
+    config.replace_values(values)
+    poller.mappings = load_mappings(values, register_map)
+
+    poller.modbus.connect()
+    poller.cycle()
+    sent = drain(expected=5)
+
+    # PV power is 4321 W in the fixture -> 4.321 kW for the Energiemonitor
+    assert "mtec_pv: 4.321" in sent
+    # Grid power is 1200 W export -> Emo wants that negative
+    assert "mtec_grid_power: -1.200" in sent
+
+
+def test_preset_template_contains_only_the_block_inputs(web):
+    client, *_ = web
+    # The template always describes what the container really sends, so the
+    # preset has to be applied before it is downloaded.
+    client.post("/api/v1/mapping/preset/energiemonitor")
+    xml = client.get("/api/v1/loxone-template/udp?preset=energiemonitor").get_data(as_text=True)
+
+    assert xml.count("VirtualInUdpCmd") == 7
+    # Each command names the block input it feeds, so wiring it up is obvious.
+    assert "Ppwr - Produktionsleistung" in xml
+    assert "Gpwr - Netzleistung" in xml
+    # Labelled in the unit the container now sends, not the raw register unit.
+    assert 'Unit="&lt;v.3&gt; kW"' in xml
+    assert client.get("/api/v1/loxone-template/udp?preset=nope").status_code == 404
+
+
+def test_preset_template_ignores_the_enabled_flags(web):
+    """The preset decides what belongs in the template, not the checkboxes."""
+    client, *_ = web
+    client.post("/api/v1/mapping/preset/energiemonitor")
+    client.post("/api/v1/mapping", json={"values": {"pv": {"enabled": False}}})
+    xml = client.get("/api/v1/loxone-template/udp?preset=energiemonitor").get_data(as_text=True)
+    assert "mtec_pv" in xml

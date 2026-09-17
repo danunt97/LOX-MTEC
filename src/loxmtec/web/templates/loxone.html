@@ -65,6 +65,47 @@
     <p class="hint" style="margin-top:12px">Basis-URL dieser Instanz: <code id="base-url"></code></p>
   </div>
 
+  <div class="card" style="grid-column:1/-1">
+    <h3>Energiemonitor-Baustein (Emo) einrichten</h3>
+    <p>
+      Der Baustein erwartet <b>kW</b> und eigene Vorzeichen. Ein Klick stellt die sieben
+      benötigten Werte im Container passend ein - danach kommen sie bereits richtig
+      umgerechnet an, in Loxone ist keine Korrektur und kein Multiplizierer nötig.
+    </p>
+    <div class="toolbar">
+      <button class="primary" data-action="/api/v1/mapping/preset/energiemonitor"
+              data-label="Werte für den Energiemonitor eingestellt">1 · Werte einstellen</button>
+      <a class="btn" id="emo-udp" href="/api/v1/loxone-template/udp?preset=energiemonitor">2 · UDP-Vorlage laden</a>
+      <a class="btn" id="emo-http" href="/api/v1/loxone-template/http?preset=energiemonitor">2 · HTTP-Vorlage laden</a>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Emo-Eingang</th><th>Einheit</th><th>Virtueller Eingang</th><th>Umrechnung im Container</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><b>Ppwr</b> Produktionsleistung</td><td>kW</td><td class="mono">pv</td><td>W → kW</td></tr>
+        <tr><td><b>Gpwr</b> Netzleistung</td><td>kW</td><td class="mono">grid_power</td><td>W → kW, Vorzeichen gedreht</td></tr>
+        <tr><td><b>Spwr</b> Speicherleistung</td><td>kW</td><td class="mono">battery</td><td>W → kW</td></tr>
+        <tr><td><b>SoC</b> Ladezustand</td><td>%</td><td class="mono">battery_soc</td><td>unverändert</td></tr>
+        <tr><td><b>Ptot</b> Produktion gesamt</td><td>kWh</td><td class="mono">pv_total</td><td>unverändert</td></tr>
+        <tr><td><b>Gi</b> Netz Energie Import</td><td>kWh</td><td class="mono">grid_purchase_total</td><td>unverändert</td></tr>
+        <tr><td><b>Ge</b> Netz Energie Export</td><td>kWh</td><td class="mono">grid_feed_total</td><td>unverändert</td></tr>
+      </tbody>
+    </table>
+    <p class="hint" style="margin-top:12px">
+      <b>3 · Am Baustein einstellen:</b> Datenquelle <code>Objekteingänge</code>,
+      Parameter <code>Abs = 1</code> (der Container liefert Zählerstände, keine Zuwächse)
+      und die <code>Speicherkapazität</code> deines Akkus in kWh.
+    </p>
+    <p class="hint">
+      Das Vorzeichen bei <code>Gpwr</code>: der Wechselrichter zählt Einspeisung positiv,
+      der Energiemonitor den Netzbezug. Deshalb steht bei <code>grid_power</code> der
+      Faktor <code>-0.001</code>. Zum Prüfen: nachts ohne PV muss <code>Gpwr</code>
+      positiv sein. Stimmt es bei dir andersherum, das Vorzeichen des Faktors auf der
+      Seite <a href="/values">Werte</a> umdrehen.
+    </p>
+  </div>
+
   <div class="card">
     <h3>Vorlage in Loxone Config einspielen</h3>
     <ol class="steps">
@@ -113,7 +154,33 @@
 <script>
   const base = `${location.protocol}//${location.host}`;
   document.getElementById("base-url").textContent = base;
-  document.getElementById("tpl-http").href =
-    `/api/v1/loxone-template/http?url=${encodeURIComponent(base + "/api/v1/values")}`;
+  /* Die Vorlage beschreibt immer den tatsaechlichen Stand des Containers.
+     Wer sie vor Schritt 1 laedt, bekaeme W statt kW - also vorher pruefen. */
+  async function presetApplied() {
+    try {
+      const data = await LX.get("/api/v1/mapping");
+      const pv = data.rows.find((row) => row.short === "pv");
+      return pv && Number(pv.factor) === 0.001;
+    } catch (err) {
+      return true; // im Zweifel nicht im Weg stehen
+    }
+  }
+
+  for (const id of ["emo-udp", "emo-http"]) {
+    document.getElementById(id).addEventListener("click", async (event) => {
+      if (await presetApplied()) return;
+      event.preventDefault();
+      if (confirm("Die Werte sind noch nicht für den Energiemonitor eingestellt - die "
+                + "Vorlage würde W statt kW enthalten.\n\nJetzt Schritt 1 ausführen?")) {
+        await LX.action("/api/v1/mapping/preset/energiemonitor", "Werte eingestellt");
+        location.href = event.target.href;
+      }
+    });
+  }
+
+  const pullUrl = encodeURIComponent(base + "/api/v1/values");
+  document.getElementById("tpl-http").href = `/api/v1/loxone-template/http?url=${pullUrl}`;
+  document.getElementById("emo-http").href =
+    `/api/v1/loxone-template/http?preset=energiemonitor&url=${pullUrl}`;
 </script>
 {% endblock %}

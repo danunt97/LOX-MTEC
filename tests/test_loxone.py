@@ -297,3 +297,75 @@ def test_failed_values_are_retried_next_cycle(udp_listener):
     transport.attempts.clear()
     lox.publish(values, mappings)
     assert transport.attempts == ["grid_power"]
+
+
+# ----------------------------------------------------------------------
+# factor / unit (Loxone blocks want their own units and signs)
+# ----------------------------------------------------------------------
+def test_factor_converts_watt_to_kilowatt():
+    assert format_value(4277, mapping(factor=0.001, decimals=3)) == "4.277"
+
+
+def test_negative_factor_flips_the_sign():
+    # The inverter counts grid power positive on export, the Energiemonitor
+    # counts it positive on import.
+    emo = mapping("grid_power", factor=-0.001, decimals=3)
+    assert format_value(4277, emo) == "-4.277"  # export
+    assert format_value(-1500, emo) == "1.500"  # import
+
+
+def test_factor_leaves_text_alone():
+    assert format_value("MTEC8K3P25", mapping(factor=0.001)) == "MTEC8K3P25"
+
+
+def test_deadband_applies_after_the_factor(udp_listener):
+    port, _ = udp_listener
+    lox = client(port)
+    # 0.5 kW deadband on a value delivered in W
+    mappings = {"pv": mapping(factor=0.001, decimals=3, deadband=0.5)}
+    values = {"pv": entry("pv", 1000.0)}
+    lox.send(lox.build_payloads(values, mappings))
+
+    values["pv"].value = 1200.0  # +0.2 kW -> below the deadband
+    assert lox.build_payloads(values, mappings) == []
+    values["pv"].value = 1600.0  # +0.6 kW -> above it
+    assert len(lox.build_payloads(values, mappings)) == 1
+
+
+def test_unit_override_lands_in_the_template(register_map):
+    from loxmtec.loxone.template import unit_string
+
+    register = register_map.by_short("pv")
+    assert unit_string(register, mapping("pv", decimals=0)) == "<v> W"
+    assert unit_string(register, mapping("pv", decimals=3, unit="kW")) == "<v.3> kW"
+
+
+def test_energiemonitor_preset_shapes_the_values(register_map):
+    from loxmtec.mapping import ensure_defaults
+    from loxmtec.presets import apply_preset
+
+    values, applied = apply_preset("energiemonitor", ensure_defaults({}, register_map))
+
+    assert set(applied) == {
+        "pv",
+        "grid_power",
+        "battery",
+        "battery_soc",
+        "pv_total",
+        "grid_purchase_total",
+        "grid_feed_total",
+    }
+    assert values["pv"]["factor"] == 0.001
+    assert values["pv"]["unit"] == "kW"
+    assert values["grid_power"]["factor"] == -0.001  # Emo counts import positive
+    assert values["battery"]["factor"] == 0.001  # discharge is positive in both
+    assert values["pv_total"]["factor"] == 1.0  # already kWh
+    assert all(values[short]["enabled"] for short in applied)
+
+
+def test_unknown_preset_is_rejected(register_map):
+    from loxmtec.mapping import ensure_defaults
+    from loxmtec.presets import apply_preset
+
+    with pytest.raises(KeyError):
+        apply_preset("does-not-exist", ensure_defaults({}, register_map))

@@ -20,6 +20,7 @@ from loxmtec.loxone.template import (
     http_template,
     udp_template,
 )
+from loxmtec.presets import PRESETS, apply_preset
 from loxmtec.mapping import (
     default_decimals,
     duplicate_targets,
@@ -211,6 +212,8 @@ def create_app(ctx: AppContext) -> Flask:
                     "target": mapping.target,
                     "decimals": mapping.decimals,
                     "deadband": mapping.deadband,
+                    "factor": mapping.factor,
+                    "unit_override": mapping.unit,
                     "default_decimals": default_decimals(register),
                     "value": entry.value if entry else None,
                     "updated": entry.as_dict()["updated"] if entry else None,
@@ -221,6 +224,7 @@ def create_app(ctx: AppContext) -> Flask:
                 "prefix": ctx.config.get("loxone", "prefix", ""),
                 "groups": ctx.registers.groups,
                 "rows": rows,
+                "presets": [preset.as_dict() for preset in PRESETS.values()],
                 "duplicates": duplicate_targets(mappings, ctx.config.get("loxone", "prefix", "")),
             }
         )
@@ -246,6 +250,10 @@ def create_app(ctx: AppContext) -> Flask:
                 entry["decimals"] = row["decimals"]
             if "deadband" in row:
                 entry["deadband"] = row["deadband"]
+            if "factor" in row:
+                entry["factor"] = row["factor"]
+            if "unit_override" in row:
+                entry["unit"] = row["unit_override"]
             current[short] = entry
 
         cleaned = ensure_defaults(current, ctx.registers)
@@ -258,6 +266,30 @@ def create_app(ctx: AppContext) -> Flask:
         duplicates = duplicate_targets(mappings, ctx.config.get("loxone", "prefix", ""))
         logger.info("Value mapping updated via web GUI (%d Werte)", len(payload["values"]))
         return jsonify({"ok": True, "duplicates": duplicates})
+
+    @app.route("/api/v1/mapping/preset/<key>", methods=["POST"])
+    @protected
+    def api_mapping_preset(key: str):
+        """Configure the values one Loxone block needs, in that block's units."""
+        current = ensure_defaults(ctx.config.section("values"), ctx.registers)
+        try:
+            updated, applied = apply_preset(key, current)
+        except KeyError:
+            return jsonify({"ok": False, "message": f"Unbekannte Vorlage: {key}"}), 404
+
+        ctx.config.replace_values(updated)
+        if not ctx.config.save():
+            return jsonify({"ok": False, "message": "Speichern fehlgeschlagen"}), 500
+
+        ctx.poller.request_reload()
+        logger.info("Preset '%s' applied to %d values", key, len(applied))
+        return jsonify(
+            {
+                "ok": True,
+                "applied": applied,
+                "message": f"{len(applied)} Werte für {PRESETS[key].title} eingestellt",
+            }
+        )
 
     # ------------------------------------------------------------------
     # REST API - actions
@@ -331,6 +363,17 @@ def create_app(ctx: AppContext) -> Flask:
         prefix = str(loxone.get("prefix") or "")
         only_enabled = request.args.get("all", "0") not in ("1", "true", "yes")
 
+        include: set[str] | None = None
+        notes: dict[str, str] | None = None
+        preset_key = request.args.get("preset")
+        if preset_key:
+            preset = PRESETS.get(preset_key)
+            if preset is None:
+                return Response(f"Unbekannte Vorlage: {preset_key}", 404, mimetype="text/plain")
+            include = set(preset.values)
+            notes = {short: entry.note for short, entry in preset.values.items() if entry.note}
+            only_enabled = False  # the preset decides what belongs in the template
+
         if kind == MODE_UDP:
             xml = udp_template(
                 ctx.registers,
@@ -339,8 +382,10 @@ def create_app(ctx: AppContext) -> Flask:
                 port=int(loxone.get("udp_port", 7000)),
                 only_enabled=only_enabled,
                 template_type=_template_type(TEMPLATE_TYPE_UDP),
+                include=include,
+                notes=notes,
             )
-            filename = "loxmtec-udp-eingang.xml"
+            filename = f"loxmtec-{preset_key}-udp.xml" if preset_key else "loxmtec-udp-eingang.xml"
         elif kind == MODE_HTTP:
             url = request.args.get("url") or _default_pull_url(ctx)
             xml = http_template(
@@ -351,8 +396,10 @@ def create_app(ctx: AppContext) -> Flask:
                 polling_time=int(ctx.config.get("poll", "now", 10)),
                 only_enabled=only_enabled,
                 template_type=_template_type(TEMPLATE_TYPE_HTTP),
+                include=include,
+                notes=notes,
             )
-            filename = "loxmtec-http-eingang.xml"
+            filename = f"loxmtec-{preset_key}-http.xml" if preset_key else "loxmtec-http-eingang.xml"
         else:
             return Response(f"Unbekannte Vorlage: {kind}", 404, mimetype="text/plain")
 
