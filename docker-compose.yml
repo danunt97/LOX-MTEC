@@ -1,16 +1,13 @@
 # LOX-MTEC - M-TEC Energybutler -> Loxone Miniserver
 #
-#   mkdir -p config && sudo chown -R 1000:1000 config
-#   docker compose up -d
+# Synology: Container Manager -> Projekt -> Erstellen -> diesen Inhalt einfuegen.
+# Kommandozeile: docker compose up -d
 #
-# Danach die Weboberflaeche unter http://<NAS-IP>:8080 oeffnen.
+# Danach die Weboberflaeche unter http://<NAS-IP>:8080 oeffnen und dort alles
+# Weitere einstellen. Mehr als diese Datei wird nicht gebraucht.
 services:
   loxmtec:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    # Alternativ ein fertiges Image verwenden:
-    # image: ghcr.io/danunt97/lox-mtec:latest
+    image: ghcr.io/danunt97/lox-mtec:latest
     container_name: loxmtec
     restart: unless-stopped
 
@@ -18,30 +15,14 @@ services:
       - "8080:8080"
 
     volumes:
-      # Enthaelt config.yaml - hier liegen alle Einstellungen und die Zuordnung
-      # der Werte. Der Ordner muss dem Benutzer 1000 gehoeren.
-      - ./config:/config
+      # Benanntes Volume - Docker legt es mit den richtigen Rechten an.
+      # Wer lieber einen Ordner auf der NAS haette, ersetzt die Zeile durch
+      #   - ./config:/config
+      # und fuehrt einmalig "sudo chown -R 1000:1000 ./config" aus.
+      - loxmtec-config:/config
 
     environment:
-      # Diese Werte greifen nur beim allerersten Start bzw. ueberschreiben die
-      # config.yaml. Alles Weitere wird in der Weboberflaeche eingestellt.
       TZ: Europe/Berlin
-      LOXMTEC_MODBUS_HOST: espressif
-      LOXMTEC_LOXONE_MODE: udp
-      LOXMTEC_LOXONE_HOST: 192.168.1.10
-      LOXMTEC_LOXONE_UDP_PORT: "7000"
-      LOXMTEC_LOXONE_PREFIX: mtec_
-      # LOXMTEC_WEB_USER: loxone
-      # LOXMTEC_WEB_PASSWORD: bitte-aendern
-      # LOXMTEC_LOG_LEVEL: DEBUG
 
-    # Der Container braucht nur ausgehende Verbindungen zum Wechselrichter und
-    # zum Miniserver - beide liegen im LAN.
-    networks:
-      - default
-
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+volumes:
+  loxmtec-config:

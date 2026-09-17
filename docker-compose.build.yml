@@ -1,0 +1,22 @@
+# Variante zum Selberbauen statt das fertige Image zu laden.
+#
+#   docker compose -f docker-compose.build.yml up -d --build
+#
+# Nur noetig, wenn du am Code etwas aenderst - fuer den normalen Betrieb
+# reicht die docker-compose.yml.
+services:
+  loxmtec:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: loxmtec
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - loxmtec-config:/config
+    environment:
+      TZ: Europe/Berlin
+
+volumes:
+  loxmtec-config:

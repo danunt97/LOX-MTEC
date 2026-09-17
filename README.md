@@ -2,6 +2,10 @@
 
 **M-TEC Energybutler → Loxone Miniserver. Ein Docker-Container, Weboberfläche, Watchdog.**
 
+[![Tests](https://github.com/danunt97/LOX-MTEC/actions/workflows/tests.yml/badge.svg)](https://github.com/danunt97/LOX-MTEC/actions/workflows/tests.yml)
+[![Docker image](https://github.com/danunt97/LOX-MTEC/actions/workflows/docker.yml/badge.svg)](https://github.com/danunt97/LOX-MTEC/actions/workflows/docker.yml)
+[![Image](https://img.shields.io/badge/ghcr.io-danunt97%2Flox--mtec-blue?logo=docker&logoColor=white)](https://github.com/danunt97/LOX-MTEC/pkgs/container/lox-mtec)
+
 LOX-MTEC liest die Werte eines M-TEC Energybutler (Wattsonic / Sunways / Daxtromn) per
 Modbus TCP aus und schreibt sie direkt in einen Loxone Miniserver. Der Umweg über
 ioBroker + Simple-API + MQTT-Broker entfällt – es läuft alles in einem Container.
@@ -13,7 +17,7 @@ ioBroker + Simple-API + MQTT-Broker entfällt – es läuft alles in einem Conta
 ## Inhalt
 
 - [Was der Container macht](#was-der-container-macht)
-- [Schnellstart](#schnellstart)
+- [Installation](#installation)
 - [Loxone einrichten](#loxone-einrichten)
 - [Weboberfläche](#weboberfläche)
 - [Konfiguration](#konfiguration)
@@ -62,57 +66,97 @@ eigenen, langsameren Intervallen. Das hält die Last auf dem Wechselrichter nied
 
 ---
 
-## Schnellstart
+## Installation
 
-### Docker Compose (auch auf der Synology)
+Es gibt ein fertiges Image für `amd64` und `arm64` — nichts bauen, nichts klonen:
+
+```
+ghcr.io/danunt97/lox-mtec:latest
+```
+
+### Synology Container Manager (empfohlen, ohne Kommandozeile)
+
+1. **Container Manager** öffnen → links **Projekt** → **Erstellen**
+2. Projektname `loxmtec`, als Pfad einen neuen Ordner wählen (z. B. `docker/loxmtec`)
+3. Quelle: **Docker-compose.yml erstellen** und diesen Inhalt einfügen:
+
+   ```yaml
+   services:
+     loxmtec:
+       image: ghcr.io/danunt97/lox-mtec:latest
+       container_name: loxmtec
+       restart: unless-stopped
+       ports:
+         - "8080:8080"
+       volumes:
+         - loxmtec-config:/config
+       environment:
+         TZ: Europe/Berlin
+
+   volumes:
+     loxmtec-config:
+   ```
+
+4. **Weiter** → **Fertig**. Das Image wird automatisch geladen und gestartet.
+5. `http://<NAS-IP>:8080` im Browser öffnen.
+
+Kein `host`-Netzwerk nötig, keine Rechte-Anpassung, kein Login bei der Registry.
+
+### Kommandozeile
 
 ```bash
-git clone https://github.com/danunt97/LOX-MTEC.git
-cd LOX-MTEC
-mkdir -p config && sudo chown -R 1000:1000 config
+docker run -d --name loxmtec --restart unless-stopped \
+  -p 8080:8080 \
+  -v loxmtec-config:/config \
+  -e TZ=Europe/Berlin \
+  ghcr.io/danunt97/lox-mtec:latest
+```
+
+Oder mit der `docker-compose.yml` aus diesem Repo:
+
+```bash
+curl -O https://raw.githubusercontent.com/danunt97/LOX-MTEC/main/docker-compose.yml
 docker compose up -d
 ```
 
-Danach `http://<NAS-IP>:8080` im Browser öffnen.
+### Selbst bauen
 
-Der Container läuft als Benutzer `1000` – deshalb der `chown`. Wer das nicht will, ergänzt in
-der `docker-compose.yml` einfach `user: "0:0"`.
-
-### Ohne Compose
+Nur nötig, wenn du am Code etwas änderst:
 
 ```bash
-docker build -f docker/Dockerfile -t loxmtec .
-docker run -d --name loxmtec --restart unless-stopped \
-  -p 8080:8080 \
-  -v /volume1/docker/loxmtec:/config \
-  -e LOXMTEC_MODBUS_HOST=espressif \
-  -e LOXMTEC_LOXONE_HOST=192.168.1.10 \
-  loxmtec
+git clone https://github.com/danunt97/LOX-MTEC.git && cd LOX-MTEC
+docker compose -f docker-compose.build.yml up -d --build
 ```
 
-### Synology Container Manager (ohne Kommandozeile)
+### Konfiguration im Volume
 
-1. In der DSM-Dateistation einen Ordner anlegen, z. B. `docker/loxmtec`.
-2. Container Manager → **Projekt** → **Erstellen**, Pfad auf den Ordner setzen und den Inhalt
-   der `docker-compose.yml` einfügen.
-3. Projekt starten, danach `http://<NAS-IP>:8080` aufrufen.
+Die Einstellungen liegen im benannten Volume `loxmtec-config` unter `/config/config.yaml`.
+Docker legt es mit den richtigen Rechten an — deshalb der Vorzug gegenüber einem
+Ordner auf der NAS. Wer die Datei trotzdem direkt im Dateisystem haben will,
+ersetzt in der Compose-Datei die Volume-Zeile durch `- ./config:/config` und führt
+einmalig `sudo chown -R 1000:1000 ./config` aus (der Container läuft als Benutzer 1000).
 
-Ein `host`-Netzwerk ist nicht nötig: der Container braucht nur ausgehende Verbindungen zum
-Wechselrichter und zum Miniserver.
+### Updates
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Im Container Manager: Projekt → **Aktion** → **Erstellen** (lädt das Image neu).
+Die Konfiguration bleibt im Volume erhalten.
 
 ### Erster Start
 
-Beim ersten Start legt der Container eine `config.yaml` im `/config`-Volume an und füllt sie mit
-allen 85 Werten. Danach in der Weboberfläche unter **Einstellungen**:
+Beim ersten Start legt der Container eine `config.yaml` an und füllt sie mit allen
+85 Werten. Danach in der Weboberfläche unter **Einstellungen**:
 
 1. **IP des Wechselrichters** eintragen (meist `espressif`; sonst die IP des WLAN-Sticks).
 2. **Übertragungsart** und **Miniserver-IP** eintragen.
 3. Optional ein **Präfix** wie `mtec_` setzen, damit die Eingänge im Miniserver zusammenstehen.
 
-Auf der Seite **Werte** lässt sich anschließend abwählen, was nicht gebraucht wird – weniger
+Auf der Seite **Werte** lässt sich anschließend abwählen, was nicht gebraucht wird — weniger
 Werte heißt weniger virtuelle Eingänge im Miniserver.
 
----
 
 ## Loxone einrichten
 

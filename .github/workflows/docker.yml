@@ -9,7 +9,9 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # Explicitly lowercase: container registries reject capitals, and the repo
+  # name (LOX-MTEC) has them.
+  IMAGE_NAME: ${{ github.repository_owner }}/lox-mtec
 
 jobs:
   build:
