@@ -29,9 +29,11 @@ from loxmtec.registers import Register, RegisterMap
 BOM = "﻿"
 XML_HEADER = '<?xml version="1.0" encoding="utf-8"?>\n'
 
-# templateType identifies the kind of template. 2 = virtueller HTTP-Eingang,
-# taken from a template exported by Loxone Config. The UDP value is not
-# confirmed yet, which is why it can be overridden per request.
+# templateType identifies the kind of template. Both values are confirmed
+# against Loxone Config: 2 = virtueller HTTP-Eingang (from a template exported
+# by Loxone Config), 3 = virtueller UDP-Eingang (imported successfully with
+# Loxone Config 17). Still overridable per request in case another version
+# numbers them differently.
 TEMPLATE_TYPE_HTTP = 2
 TEMPLATE_TYPE_UDP = 3
 MIN_VERSION = "17010630"

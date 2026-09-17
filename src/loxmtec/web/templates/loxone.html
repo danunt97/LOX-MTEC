@@ -76,13 +76,17 @@
       <li>In den Miniserver speichern.</li>
     </ol>
     <p class="hint">
+      Wichtig: Das <b>Namens-Präfix</b> in den Einstellungen muss genau das sein, das beim
+      Download der Vorlage eingestellt war - sonst passt die Befehlserkennung im Miniserver
+      nicht mehr zu dem, was der Container sendet.
+    </p>
+    <p class="hint">
       Meldet Loxone Config <i>„Ungültiges Format oder falscher Vorlagetyp“</i>, passt der
-      <code>templateType</code> in der Datei nicht zu deiner Version. Er lässt sich beim
-      Download überschreiben, z.&nbsp;B.
-      <code>/api/v1/loxone-template/udp?type=1</code> (Werte 1 bis 5 durchprobieren).
-      Sicherer Weg: in Loxone Config einen virtuellen Eingang von Hand anlegen,
-      <b>als Vorlage speichern</b> und in der erzeugten Datei nachsehen, welchen
-      <code>templateType</code> deine Version schreibt.
+      <code>templateType</code> in der Datei nicht zu deiner Version (getestet mit Loxone
+      Config 17). Er lässt sich beim Download überschreiben, z.&nbsp;B.
+      <code>/api/v1/loxone-template/udp?type=1</code>. Sicherer Weg: in Loxone Config einen
+      virtuellen Eingang von Hand anlegen, <b>als Vorlage speichern</b> und in der erzeugten
+      Datei nachsehen, welchen <code>templateType</code> deine Version schreibt.
     </p>
   </div>
 
