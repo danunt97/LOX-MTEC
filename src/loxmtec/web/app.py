@@ -14,7 +14,12 @@ from loxmtec.config import DEFAULTS, deep_merge, validate
 from loxmtec.const import LOXONE_MODES, MODE_HTTP, MODE_UDP
 from loxmtec.context import AppContext
 from loxmtec.loxone.client import format_value
-from loxmtec.loxone.template import http_template, udp_template
+from loxmtec.loxone.template import (
+    TEMPLATE_TYPE_HTTP,
+    TEMPLATE_TYPE_UDP,
+    http_template,
+    udp_template,
+)
 from loxmtec.mapping import (
     default_decimals,
     duplicate_targets,
@@ -333,6 +338,7 @@ def create_app(ctx: AppContext) -> Flask:
                 prefix=prefix,
                 port=int(loxone.get("udp_port", 7000)),
                 only_enabled=only_enabled,
+                template_type=_template_type(TEMPLATE_TYPE_UDP),
             )
             filename = "loxmtec-udp-eingang.xml"
         elif kind == MODE_HTTP:
@@ -344,6 +350,7 @@ def create_app(ctx: AppContext) -> Flask:
                 prefix=prefix,
                 polling_time=int(ctx.config.get("poll", "now", 10)),
                 only_enabled=only_enabled,
+                template_type=_template_type(TEMPLATE_TYPE_HTTP),
             )
             filename = "loxmtec-http-eingang.xml"
         else:
@@ -361,6 +368,18 @@ def create_app(ctx: AppContext) -> Flask:
 # ----------------------------------------------------------------------
 # helpers
 # ----------------------------------------------------------------------
+def _template_type(default: int) -> int:
+    """Allow ?type=N so a different Loxone Config version can be tried without
+    waiting for a new release."""
+    raw = request.args.get("type")
+    if raw is None:
+        return default
+    try:
+        return max(0, min(99, int(raw)))
+    except ValueError:
+        return default
+
+
 def _default_pull_url(ctx: AppContext) -> str:
     """Best guess for the URL Loxone should poll - the host the GUI was opened on."""
     port = ctx.config.get("web", "port", 8080)

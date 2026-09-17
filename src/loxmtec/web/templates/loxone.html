@@ -66,6 +66,27 @@
   </div>
 
   <div class="card">
+    <h3>Vorlage in Loxone Config einspielen</h3>
+    <ol class="steps">
+      <li>Die heruntergeladene XML nach
+          <code>Dokumente\Loxone\Loxone Config\Templates\VirtualIn\</code> kopieren.</li>
+      <li>Loxone Config neu starten - Vorlagen werden nur beim Start eingelesen.</li>
+      <li>In der Peripherie den passenden virtuellen Eingang anlegen und dort
+          <b>Vorlage einfügen</b> wählen; „LOX-MTEC“ steht dann in der Liste.</li>
+      <li>In den Miniserver speichern.</li>
+    </ol>
+    <p class="hint">
+      Meldet Loxone Config <i>„Ungültiges Format oder falscher Vorlagetyp“</i>, passt der
+      <code>templateType</code> in der Datei nicht zu deiner Version. Er lässt sich beim
+      Download überschreiben, z.&nbsp;B.
+      <code>/api/v1/loxone-template/udp?type=1</code> (Werte 1 bis 5 durchprobieren).
+      Sicherer Weg: in Loxone Config einen virtuellen Eingang von Hand anlegen,
+      <b>als Vorlage speichern</b> und in der erzeugten Datei nachsehen, welchen
+      <code>templateType</code> deine Version schreibt.
+    </p>
+  </div>
+
+  <div class="card">
     <h3>Hinweise</h3>
     <ul>
       <li>Textwerte (Seriennummer, Datum, Firmware) lassen sich nicht als analoger virtueller

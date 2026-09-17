@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 import xml.etree.ElementTree as ET
 
+import pytest
+
 from loxmtec.datastore import ValueEntry
 from loxmtec.loxone import LoxoneClient, LoxoneSettings
 from loxmtec.loxone.client import format_value
@@ -153,16 +155,71 @@ def test_switching_transport_rebuilds_the_client(udp_listener):
 # ----------------------------------------------------------------------
 def test_udp_template_structure(register_map):
     mappings = load_mappings(ensure_defaults({}, register_map), register_map)
-    root = ET.fromstring(udp_template(register_map, mappings, prefix="mtec_", port=7001))
+    xml = udp_template(register_map, mappings, prefix="mtec_", port=7001)
+    root = ET.fromstring(xml)
 
     assert root.tag == "VirtualInUdp"
     assert root.attrib["Port"] == "7001"
-    commands = {node.attrib["Title"]: node for node in root }
+    commands = {node.attrib["Title"]: node for node in root if node.tag.endswith("Cmd")}
     assert commands["mtec_pv"].attrib["Check"] == "mtec_pv: \\v"
     assert commands["mtec_pv"].attrib["Unit"] == "<v> W"
     assert commands["mtec_battery_soc"].attrib["Unit"] == "<v.1> %"
     # Text values have no analog equivalent in Loxone.
     assert "mtec_serial_no" not in commands
+
+
+# Loxone Config rejects a template that does not look exactly like its own
+# exports ("Ungültiges Format oder falscher Vorlagetyp"), so pin the details
+# against a template exported by Loxone Config itself.
+REFERENCE_CMD_ORDER = [
+    "Title",
+    "Comment",
+    "Check",
+    "Signed",
+    "Analog",
+    "SourceValLow",
+    "DestValLow",
+    "SourceValHigh",
+    "DestValHigh",
+    "DefVal",
+    "MinVal",
+    "MaxVal",
+    "Unit",
+    "HintText",
+]
+
+
+@pytest.mark.parametrize("kind", ["udp", "http"])
+def test_template_matches_the_format_loxone_exports(register_map, kind):
+    mappings = load_mappings(ensure_defaults({}, register_map), register_map)
+    if kind == "udp":
+        xml = udp_template(register_map, mappings)
+    else:
+        xml = http_template(register_map, mappings, url="http://nas:8080/api/v1/values")
+
+    # Loxone writes a UTF-8 BOM in front of the declaration.
+    assert xml.startswith("\ufeff<?xml version=\"1.0\" encoding=\"utf-8\"?>")
+
+    root = ET.fromstring(xml)
+    assert root.attrib["HintText"] == ""
+
+    # The Info element identifies the template kind and must come first.
+    info = root[0]
+    assert info.tag == "Info"
+    assert info.attrib["templateType"].isdigit()
+    assert info.attrib["minVersion"]
+
+    command = root[1]
+    assert list(command.attrib) == REFERENCE_CMD_ORDER
+    # Identity scaling, not the 0/0 that an earlier version emitted.
+    assert command.attrib["SourceValHigh"] == "100"
+    assert command.attrib["DestValHigh"] == "100"
+
+
+def test_template_type_is_overridable(register_map):
+    mappings = load_mappings(ensure_defaults({}, register_map), register_map)
+    root = ET.fromstring(udp_template(register_map, mappings, template_type=7))
+    assert root[0].attrib["templateType"] == "7"
 
 
 def test_http_template_uses_the_json_keys(register_map):
@@ -173,8 +230,9 @@ def test_http_template_uses_the_json_keys(register_map):
     assert root.tag == "VirtualInHttp"
     assert root.attrib["Address"] == url
     assert root.attrib["PollingTime"] == "15"
-    assert root[0].attrib["Check"].startswith('"')
-    assert root[0].attrib["Check"].endswith(':\\v')
+    command = root[1]  # root[0] is the Info element
+    assert command.attrib["Check"].startswith('"')
+    assert command.attrib["Check"].endswith(':\\v')
 
 
 def test_template_can_skip_disabled_values(register_map):
@@ -185,7 +243,8 @@ def test_template_can_skip_disabled_values(register_map):
 
     only_enabled = ET.fromstring(udp_template(register_map, mappings))
     everything = ET.fromstring(udp_template(register_map, mappings, only_enabled=False))
-    assert len(only_enabled) == 1
+    # +1 for the Info element
+    assert len(only_enabled) == 2
     assert len(everything) > 50
 
 
