@@ -22,8 +22,9 @@ from loxmtec.config import DEFAULT_CONFIG_PATH, Config, validate
 from loxmtec.context import AppContext
 from loxmtec.datastore import DataStore
 from loxmtec.mapping import ensure_defaults
+from loxmtec.presets import DEFAULT_PRESET_KEY, apply_default
 from loxmtec.poller import Poller
-from loxmtec.registers import load_register_map
+from loxmtec.registers import RegisterMap, load_register_map
 from loxmtec.watchdog import Watchdog
 
 logger = logging.getLogger("loxmtec")
@@ -76,12 +77,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # First start (or a new register map): fill in the per-value defaults and
     # persist them, so the GUI has something to show right away.
-    values = config.section("values")
-    completed = ensure_defaults(values, register_map)
-    if completed != values:
-        config.replace_values(completed)
-        config.save()
-        logger.info("Value mapping initialised with %d entries", len(completed))
+    bootstrap_values(config, register_map)
 
     problems = validate(config.as_dict())
     for problem in problems:
@@ -124,6 +120,37 @@ def main(argv: list[str] | None = None) -> int:
     poller.join(timeout=10)
     logging.shutdown()
     return _exit_code
+
+
+def bootstrap_values(config: Config, register_map: RegisterMap) -> bool:
+    """Fill in the per-value defaults, and shape a brand new config for Loxone.
+
+    On a fresh installation the Energiemonitor preset is applied once, so the
+    container delivers kW with the block's sign convention without anyone
+    having to configure anything. An existing configuration is only completed
+    with missing entries - it is never re-shaped, because from then on it
+    belongs to the user.
+
+    Returns True if something was written.
+    """
+    values = config.section("values")
+    first_run = not values
+    completed = ensure_defaults(values, register_map)
+
+    if first_run:
+        completed = apply_default(completed)
+        logger.info(
+            "Fresh configuration - applying the '%s' preset so the values fit "
+            "the Loxone Energiemonitor out of the box",
+            DEFAULT_PRESET_KEY,
+        )
+
+    if completed == values:
+        return False
+    config.replace_values(completed)
+    config.save()
+    logger.info("Value mapping initialised with %d entries", len(completed))
+    return True
 
 
 def _check_config_writable(path: Path) -> None:

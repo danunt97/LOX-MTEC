@@ -384,3 +384,73 @@ def test_preset_template_ignores_the_enabled_flags(web):
     client.post("/api/v1/mapping", json={"values": {"pv": {"enabled": False}}})
     xml = client.get("/api/v1/loxone-template/udp?preset=energiemonitor").get_data(as_text=True)
     assert "mtec_pv" in xml
+
+
+# ----------------------------------------------------------------------
+# first run: ready for the Loxone Energiemonitor without configuring anything
+# ----------------------------------------------------------------------
+def test_fresh_config_is_shaped_for_the_energiemonitor(tmp_path, register_map):
+    from loxmtec.config import Config
+    from loxmtec.main import bootstrap_values
+
+    config = Config(tmp_path / "config.yaml").load()
+    assert bootstrap_values(config, register_map) is True
+
+    values = config.section("values")
+    assert len(values) == 85  # every register still gets an entry
+    # The three powers arrive in kW, grid power with the block's sign.
+    assert values["pv"] == {
+        "enabled": True,
+        "target": "pv",
+        "decimals": 3,
+        "deadband": 0.0,
+        "factor": 0.001,
+        "unit": "kW",
+    }
+    assert values["grid_power"]["factor"] == -0.001
+    assert values["battery"]["factor"] == 0.001
+    assert values["battery_soc"]["unit"] == "%"
+
+
+def test_existing_config_is_never_re_shaped(tmp_path, register_map):
+    from loxmtec.config import Config
+    from loxmtec.main import bootstrap_values
+
+    path = tmp_path / "config.yaml"
+    bootstrap_values(Config(path).load(), register_map)
+
+    # The user switches PV back to raw watts and restarts the container.
+    config = Config(path).load()
+    values = config.section("values")
+    values["pv"] = {**values["pv"], "factor": 1.0, "unit": "", "decimals": 0}
+    config.replace_values(values)
+    config.save()
+
+    reloaded = Config(path).load()
+    bootstrap_values(reloaded, register_map)
+    assert reloaded.section("values")["pv"]["factor"] == 1.0
+    assert reloaded.section("values")["pv"]["unit"] == ""
+
+
+def test_template_download_defaults_to_the_energiemonitor(web):
+    client, *_ = web
+    client.post("/api/v1/mapping/preset/energiemonitor")
+
+    default = client.get("/api/v1/loxone-template/udp").get_data(as_text=True)
+    assert default.count("VirtualInUdpCmd") == 7
+    assert 'Unit="&lt;v.3&gt; kW"' in default
+    assert "Ppwr - Produktionsleistung" in default
+
+    everything = client.get("/api/v1/loxone-template/udp?preset=none").get_data(as_text=True)
+    assert everything.count("VirtualInUdpCmd") > 50
+
+
+def test_raw_preset_undoes_the_conversion(web):
+    client, config, *_ = web
+    client.post("/api/v1/mapping/preset/energiemonitor")
+    assert config.section("values")["pv"]["factor"] == 0.001
+
+    client.post("/api/v1/mapping/preset/raw")
+    assert config.section("values")["pv"]["factor"] == 1.0
+    assert config.section("values")["pv"]["unit"] == ""
+    assert config.section("values")["grid_power"]["factor"] == 1.0

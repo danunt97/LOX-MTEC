@@ -20,7 +20,7 @@ from loxmtec.loxone.template import (
     http_template,
     udp_template,
 )
-from loxmtec.presets import PRESETS, apply_preset
+from loxmtec.presets import DEFAULT_PRESET_KEY, PRESETS, apply_preset
 from loxmtec.mapping import (
     default_decimals,
     duplicate_targets,
@@ -365,7 +365,11 @@ def create_app(ctx: AppContext) -> Flask:
 
         include: set[str] | None = None
         notes: dict[str, str] | None = None
-        preset_key = request.args.get("preset")
+        # The Energiemonitor template is the default; "?preset=none" asks for
+        # every enabled value instead.
+        preset_key = request.args.get("preset", DEFAULT_PRESET_KEY)
+        if preset_key in ("none", "all", ""):
+            preset_key = None
         if preset_key:
             preset = PRESETS.get(preset_key)
             if preset is None:

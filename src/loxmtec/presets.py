@@ -64,6 +64,17 @@ class Preset:
         }
 
 
+# Decimals the raw values deserve when the conversion is switched off again.
+_RAW_DECIMALS = {
+    "pv": 0,
+    "grid_power": 0,
+    "battery": 0,
+    "battery_soc": 1,
+    "pv_total": 1,
+    "grid_purchase_total": 1,
+    "grid_feed_total": 1,
+}
+
 ENERGIEMONITOR = Preset(
     key="energiemonitor",
     title="Loxone Energiemonitor (Emo)",
@@ -87,7 +98,28 @@ ENERGIEMONITOR = Preset(
     },
 )
 
-PRESETS: dict[str, Preset] = {ENERGIEMONITOR.key: ENERGIEMONITOR}
+RAW = Preset(
+    key="raw",
+    title="Rohwerte wie vom Wechselrichter",
+    description=(
+        "Hebt die Umrechnung wieder auf: Leistungen kommen dann in W statt kW und mit "
+        "dem Vorzeichen des Wechselrichters. Sinnvoll, wenn du die Werte nicht für den "
+        "Energiemonitor, sondern für eigene Bausteine verwendest."
+    ),
+    values={
+        short: PresetEntry(1.0, _RAW_DECIMALS.get(short, 0), "", entry.note)
+        for short, entry in ENERGIEMONITOR.values.items()
+    },
+)
+
+PRESETS: dict[str, Preset] = {
+    ENERGIEMONITOR.key: ENERGIEMONITOR,
+    RAW.key: RAW,
+}
+
+# Applied to a freshly created configuration so the container delivers
+# Energiemonitor-ready values without anyone having to configure anything.
+DEFAULT_PRESET_KEY = ENERGIEMONITOR.key
 
 
 def apply_preset(key: str, values: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -109,3 +141,14 @@ def apply_preset(key: str, values: dict[str, Any]) -> tuple[dict[str, Any], list
         result[short] = entry.apply_to(current)
         applied.append(short)
     return result, applied
+
+
+def apply_default(values: dict[str, Any]) -> dict[str, Any]:
+    """Shape a fresh configuration for the Energiemonitor.
+
+    New installations should work with the Loxone block straight away, so the
+    default preset is applied once, when the value list is first created. It is
+    never applied again - afterwards the configuration belongs to the user.
+    """
+    result, _applied = apply_preset(DEFAULT_PRESET_KEY, values)
+    return result

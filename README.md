@@ -10,6 +10,10 @@ LOX-MTEC liest die Werte eines M-TEC Energybutler (Wattsonic / Sunways / Daxtrom
 Modbus TCP aus und schreibt sie direkt in einen Loxone Miniserver. Der Umweg über
 ioBroker + Simple-API + MQTT-Broker entfällt – es läuft alles in einem Container.
 
+**Ab Werk auf den Loxone-Energiemonitor eingestellt:** die Werte kommen bereits in kW und
+mit den Vorzeichen des Bausteins aus dem Container. Vorlage herunterladen, in Loxone Config
+einfügen, verdrahten – fertig. Keine Korrektur-Felder, keine Multiplizierer.
+
 > Dieses Projekt ist ein Fork von [croedel/MTECmqtt](https://github.com/croedel/MTECmqtt).
 > Der ursprüngliche MQTT-/Home-Assistant-Teil bleibt erhalten (siehe [unten](#original-project-mtecmqtt)),
 > LOX-MTEC ergänzt die Loxone-Anbindung, die Weboberfläche und das Docker-Setup.
@@ -18,12 +22,13 @@ ioBroker + Simple-API + MQTT-Broker entfällt – es läuft alles in einem Conta
 
 - [Was der Container macht](#was-der-container-macht)
 - [Installation](#installation)
-- [Loxone einrichten](#loxone-einrichten)
+- [Loxone einrichten](#loxone-einrichten) — inkl. [Energiemonitor-Baustein](#der-schnelle-weg-energiemonitor-baustein)
 - [Weboberfläche](#weboberfläche)
 - [Konfiguration](#konfiguration)
 - [REST-Schnittstelle](#rest-schnittstelle)
 - [Watchdog und Health-Check](#watchdog-und-health-check)
 - [Entwicklung](#entwicklung)
+- [Changelog](#changelog)
 
 ---
 
@@ -50,11 +55,16 @@ ioBroker + Simple-API + MQTT-Broker entfällt – es läuft alles in einem Conta
 * **85 Werte** vom Wechselrichter: PV-Leistung, Netzbezug/-einspeisung, Batterie (SOC, Strom,
   Temperatur, Zellspannungen), Backup-Phasen, Tages- und Gesamtstatistik sowie berechnete
   Werte wie Hausverbrauch, Autarkiegrad und Eigenverbrauchsquote.
+* **Fertig für den Energiemonitor-Baustein**: Leistungen in kW, Vorzeichen passend,
+  Vorlage mit sprechenden Kommentaren je Baustein-Eingang – alles ohne eine einzige
+  Einstellung.
 * **Drei Wege nach Loxone**, frei wählbar – UDP-Push, HTTP-Push oder REST-Pull.
 * **Weboberfläche** zum Einstellen und Kontrollieren: Live-Werte, Zuordnung der Loxone-Namen,
   Verbindungseinstellungen, Log.
-* **Vorlagen-Export** für Loxone Config: alle virtuellen Eingänge inklusive Befehlserkennung
-  und Einheit als XML – einmal importieren statt 80× von Hand anlegen.
+* **Vorlagen-Export** für Loxone Config: virtuelle Eingänge inklusive Befehlserkennung
+  und Einheit als XML – einmal importieren statt von Hand anlegen.
+* **Faktor und Einheit je Wert**: `0.001` macht aus W kW, ein negativer Faktor dreht das
+  Vorzeichen – damit lassen sich auch Zählerbausteine und der Energieflussmonitor bedienen.
 * **Watchdog**: erkennt abgerissene Modbus-Verbindungen, verbindet neu und startet den
   Container im Zweifel neu.
 * **MQTT bleibt optional** verfügbar, falls parallel noch evcc oder Home Assistant beliefert
@@ -145,82 +155,92 @@ docker compose pull && docker compose up -d
 Im Container Manager: Projekt → **Aktion** → **Erstellen** (lädt das Image neu).
 Die Konfiguration bleibt im Volume erhalten.
 
+`:latest` bewegt sich mit jeder Änderung mit. Wer lieber auf einem festen Stand bleibt,
+trägt in der Compose-Datei eine Version ein, z. B. `ghcr.io/danunt97/lox-mtec:1.1`.
+
 ### Erster Start
 
-Beim ersten Start legt der Container eine `config.yaml` an und füllt sie mit allen
-85 Werten. Danach in der Weboberfläche unter **Einstellungen**:
+Beim ersten Start legt der Container eine `config.yaml` an, füllt sie mit allen 85 Werten
+und stellt die sieben Werte des Energiemonitor-Bausteins passend ein. Danach in der
+Weboberfläche unter **Einstellungen**:
 
 1. **IP des Wechselrichters** eintragen (meist `espressif`; sonst die IP des WLAN-Sticks).
 2. **Übertragungsart** und **Miniserver-IP** eintragen.
 3. Optional ein **Präfix** wie `mtec_` setzen, damit die Eingänge im Miniserver zusammenstehen.
 
-Auf der Seite **Werte** lässt sich anschließend abwählen, was nicht gebraucht wird — weniger
-Werte heißt weniger virtuelle Eingänge im Miniserver.
+Sobald auf dem Dashboard *Modbus: ok* steht und Werte erscheinen, geht es auf der Seite
+**Loxone** weiter. Auf der Seite **Werte** lässt sich abwählen, was nicht gebraucht wird —
+weniger Werte heißt weniger virtuelle Eingänge im Miniserver.
 
 
 ## Loxone einrichten
 
-Die Seite **Loxone** in der Weboberfläche fasst alles zusammen und bietet die passenden
-Vorlagen zum Download an. Kurzfassung:
+### Der schnelle Weg: Energiemonitor-Baustein
 
-### Variante 1 – UDP-Push (empfohlen)
+**Ab Werk eingestellt — du musst dafür nichts konfigurieren.** Der Loxone-Energiemonitor
+erwartet Leistungen in **kW** und hat eigene Vorzeichen-Konventionen. Der Container liefert
+genau das: in Loxone Config brauchst du weder Korrektur-Felder noch Multiplizierer-Bausteine.
 
-Der Container schickt jeden Wert als eigenes UDP-Paket `name: wert` an den Miniserver.
-Kein Login nötig, minimale Last, Werte sind sofort da.
+**1 · Virtuellen Eingang anlegen**
+In Loxone Config einen **Virtuellen UDP-Eingang** mit Port `7000` anlegen. (Beim REST-Pull
+entfällt das — den virtuellen HTTP-Eingang legt die Vorlage selbst an.)
 
-1. In Loxone Config einen **Virtuellen UDP-Eingang** anlegen (z. B. Port `7000`).
-2. In der Weboberfläche unter **Loxone** die UDP-Vorlage herunterladen und in Loxone Config
-   einfügen – damit sind alle Eingänge inklusive Befehlserkennung und Einheit angelegt.
-3. Unter **Einstellungen** den Modus `udp`, die Miniserver-IP und denselben Port eintragen.
+**2 · Vorlage laden und einfügen**
+Auf der Seite **Loxone** in der Weboberfläche auf *UDP-Vorlage laden* klicken. Die Datei
+enthält genau die sieben Werte des Bausteins, jeder beschriftet mit seinem Baustein-Eingang:
 
-Die Befehlserkennung je Wert lautet `name: \v`.
+```
+mtec_pv                    <v.3> kW    Ppwr - Produktionsleistung
+mtec_grid_power            <v.3> kW    Gpwr - Netzleistung
+mtec_battery               <v.3> kW    Spwr - Speicherleistung
+mtec_battery_soc           <v.1> %     SoC  - Ladezustand
+mtec_pv_total              <v.1> kWh   Ptot - Produktion gesamt
+mtec_grid_purchase_total   <v.1> kWh   Gi   - Netz Energie Import
+mtec_grid_feed_total       <v.1> kWh   Ge   - Netz Energie Export
+```
 
-### Variante 2 – HTTP-Push an virtuelle Eingänge
+Einspielen: XML nach `Dokumente\Loxone\Loxone Config\Templates\VirtualIn\` kopieren,
+Loxone Config neu starten, dann beim virtuellen Eingang **Vorlage einfügen** wählen.
 
-Der Container ruft je Wert `http://<miniserver>/dev/sps/io/<name>/<wert>` auf. Braucht einen
-Benutzer mit Schreibrechten und erzeugt deutlich mehr Last als UDP – sinnvoll, wenn UDP im
-Netz nicht erwünscht ist.
+**3 · Am Baustein einstellen**
+Datenquelle `Objekteingänge`, Parameter **`Abs = 1`** und die Speicherkapazität des Akkus
+in kWh. Das `Abs = 1` ist wichtig: der Container liefert Zählerstände, keine Zuwächse —
+bei `0` würde der Baustein jeden Wert aufaddieren.
 
-### Variante 3 – REST-Pull (wie Simple-API in ioBroker)
+**Vorzeichen-Kontrolle:** nachts ohne PV muss `Gpwr` positiv sein (Bezug aus dem Netz).
+Der Wechselrichter zählt Einspeisung positiv, der Energiemonitor den Bezug — deshalb steht
+bei `grid_power` der Faktor `-0.001`, der in einem Schritt auf kW umrechnet und das
+Vorzeichen dreht. Zählt deine Anlage andersherum, drehst du das Vorzeichen auf der Seite
+**Werte** um.
 
-Loxone holt sich die Werte per **Virtuellem HTTP-Eingang** selbst ab. Diese Schnittstelle ist
-immer aktiv, auch wenn der Push auf `off` steht. Die passende Vorlage enthält bereits die
-richtige Adresse und die Befehlserkennung `"name":\v`.
+### Mehr als die sieben Werte
 
-### Energiemonitor-Baustein (Emo)
+Der Wechselrichter liefert 85 Werte: Batteriezellen, Backup-Phasen, Temperaturen, Tages-
+und Gesamtstatistik. Was davon an Loxone geht, wählst du auf der Seite **Werte**. Die
+Vorlagen unter *„alle aktivierten Werte"* enthalten dann alles Ausgewählte.
 
-Der Loxone-Energiemonitor erwartet die Werte in **kW** und mit eigenen Vorzeichen. Damit
-in Loxone keine Korrektur- oder Multiplizierer-Bausteine nötig sind, rechnet der Container
-das selbst um: auf der Seite **Loxone** einmal **„Werte einstellen"** klicken, dann die
-zugehörige Vorlage laden. Jeder virtuelle Eingang trägt danach als Kommentar den
-Baustein-Eingang, an den er gehört.
+Jeder Wert hat dort einen **Faktor** und eine **Einheit**: `0.001` macht aus W kW, ein
+negativer Faktor dreht zusätzlich das Vorzeichen. Damit lassen sich auch die
+Zählerbausteine oder der Energieflussmonitor bedienen. Über *Vorlage anwenden* kommst du
+jederzeit zurück auf die Energiemonitor-Einstellung oder auf Rohwerte.
 
-| Emo-Eingang | Einheit | Wert | Umrechnung |
-|-------------|---------|------|------------|
-| `Ppwr` Produktionsleistung | kW | `pv` | W → kW |
-| `Gpwr` Netzleistung | kW | `grid_power` | W → kW, **Vorzeichen gedreht** |
-| `Spwr` Speicherleistung | kW | `battery` | W → kW |
-| `SoC` Ladezustand | % | `battery_soc` | unverändert |
-| `Ptot` Produktion gesamt | kWh | `pv_total` | unverändert |
-| `Gi` Netz Energie Import | kWh | `grid_purchase_total` | unverändert |
-| `Ge` Netz Energie Export | kWh | `grid_feed_total` | unverändert |
+### Die drei Übertragungswege
 
-Am Baustein selbst noch Datenquelle `Objekteingänge`, Parameter `Abs = 1` (der Container
-liefert Zählerstände, keine Zuwächse) und die Speicherkapazität des Akkus setzen.
+| | Wie | Wofür |
+|---|---|---|
+| **UDP-Push** (Standard) | ein Datagramm `name: wert` je Wert | kein Login, minimale Last, sofort aktuell |
+| **HTTP-Push** | `/dev/sps/io/<name>/<wert>` am Miniserver | wenn UDP im Netz nicht erwünscht ist |
+| **REST-Pull** | Loxone holt `/api/v1/values` selbst ab | wie Simple-API in ioBroker; läuft immer mit |
 
-Das gedrehte Vorzeichen bei `Gpwr`: der Wechselrichter zählt Einspeisung positiv, der
-Energiemonitor den Netzbezug. Zum Prüfen: nachts ohne PV muss `Gpwr` positiv sein.
-
-Die Umrechnung ist nicht auf den Energiemonitor beschränkt — auf der Seite **Werte** hat
-jeder Wert einen **Faktor** und eine **Einheit**. `0.001` macht aus W kW, ein negativer
-Faktor dreht zusätzlich das Vorzeichen. So lassen sich auch die Zählerbausteine oder der
-Energieflussmonitor bedienen.
+Der Push-Weg wird in den **Einstellungen** gewählt, die REST-Schnittstelle ist immer aktiv.
 
 > **Textwerte** (Seriennummer, Datum, Firmware-Version) lassen sich nicht als analoger
 > virtueller Eingang abbilden und sind deshalb nicht in den Vorlagen enthalten. Über die
 > REST-Schnittstelle stehen sie trotzdem zur Verfügung.
 
----
+> **Präfix nicht nachträglich ändern**, ohne die Vorlage neu zu laden und einzufügen —
+> sonst passt die Befehlserkennung im Miniserver nicht mehr zu dem, was der Container sendet.
+
 
 ## Weboberfläche
 
@@ -345,6 +365,36 @@ Aufbau des Pakets:
 | `loxmtec/poller.py` | der Takt: lesen, rechnen, speichern, senden |
 | `loxmtec/watchdog.py` | Überwachung und Neustart |
 | `loxmtec/web/` | Weboberfläche und REST-API |
+
+---
+
+## Changelog
+
+### 1.1 — Energiemonitor ab Werk
+
+* Die sieben Werte des Loxone-Energiemonitors sind bei einer Neuinstallation bereits
+  passend eingestellt: Leistungen in kW, `grid_power` mit gedrehtem Vorzeichen.
+* Die Vorlagen-Downloads liefern standardmäßig genau diese sieben Eingänge — die drei
+  Leistungen mit `<v.3> kW`. Jeder Befehl trägt als Kommentar seinen Baustein-Eingang
+  (`Ppwr`, `Gpwr`, `Spwr`, …), damit das Verdrahten ohne Nachschlagen geht.
+* Neu je Wert: **Faktor** und **Einheit**. Damit lassen sich auch Zählerbausteine und der
+  Energieflussmonitor bedienen. Das Totband wird nach dem Faktor ausgewertet, also in der
+  Einheit, die man sieht.
+* **Vorlage anwenden** auf der Seite Werte: zurück auf Energiemonitor oder auf Rohwerte.
+* Die Seite **Loxone** führt jetzt in drei Schritten durch die Einrichtung, inklusive
+  Zuordnungstabelle und der nötigen Baustein-Parameter.
+* Eine bestehende `config.yaml` wird nie umgeschrieben — der Standard greift nur beim
+  allerersten Start.
+
+### 1.0 — Erste Fassung
+
+* Modbus-TCP-Anbindung an den M-TEC Energybutler, 85 Werte inklusive berechnetem
+  Hausverbrauch, Autarkie und Eigenverbrauchsquote.
+* Drei Wege nach Loxone: UDP-Push, HTTP-Push, REST-Pull.
+* Weboberfläche mit Dashboard, Wert-Zuordnung, Einstellungen und Log.
+* Watchdog mit Reconnect und Container-Neustart, Docker-Healthcheck.
+* Vorlagen-Export für Loxone Config.
+* Fertiges Image für amd64 und arm64.
 
 ---
 

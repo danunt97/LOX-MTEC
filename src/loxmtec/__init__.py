@@ -2,6 +2,7 @@
 
 __all__ = [
     "config",
+    "presets",
     "const",
     "datastore",
     "logbuffer",
@@ -10,4 +11,4 @@ __all__ = [
     "registers",
     "watchdog",
 ]
-__version__ = "1.0.0"
+__version__ = "1.1.0"

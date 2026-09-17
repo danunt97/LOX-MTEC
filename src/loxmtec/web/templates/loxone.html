@@ -4,106 +4,108 @@
 {% block content %}
 <h1>Anbindung an Loxone</h1>
 <p class="hint">
-  Drei Wege stehen zur Auswahl. Sie schließen sich nicht aus: der Push-Modus wird in den
-  Einstellungen gewählt, die REST-Schnittstelle läuft immer mit.
+  Der Container liefert die Werte bereits so, wie der Energiemonitor-Baustein sie erwartet:
+  Leistungen in <b>kW</b>, mit den Vorzeichen des Bausteins. In Loxone Config musst du nur
+  die Vorlage einfügen und die Eingänge verdrahten - keine Korrektur, kein Multiplizierer.
 </p>
 
+<div class="card" style="border-left:4px solid var(--accent); margin-bottom:16px">
+  <h3>In 3 Schritten zum Energiemonitor</h3>
+
+  <ol class="steps" style="margin-top:12px">
+    <li>
+      <b>Virtuellen Eingang im Miniserver anlegen.</b><br>
+      Für den Push-Betrieb: in Loxone Config einen <b>Virtuellen UDP-Eingang</b> mit Port
+      <code id="udp-port">7000</code> anlegen. Für den Pull-Betrieb einen
+      <b>Virtuellen HTTP-Eingang</b> - den legt die Vorlage gleich mit an.
+    </li>
+    <li>
+      <b>Vorlage herunterladen und in Loxone Config einfügen.</b><br>
+      Sie enthält genau die sieben Werte des Bausteins, jeder beschriftet mit seinem
+      Baustein-Eingang und der richtigen Einheit.
+      <div class="toolbar" style="margin:10px 0 0">
+        <a class="btn primary" id="emo-udp" href="/api/v1/loxone-template/udp">UDP-Vorlage laden</a>
+        <a class="btn primary" id="emo-http" href="/api/v1/loxone-template/http">HTTP-Vorlage laden</a>
+      </div>
+    </li>
+    <li>
+      <b>Am Baustein einstellen:</b> Datenquelle <code>Objekteingänge</code>,
+      Parameter <code>Abs = 1</code> und die <code>Speicherkapazität</code> deines Akkus in kWh.
+      <div class="desc" style="font-size:12px;color:var(--text-dim);margin-top:4px">
+        <code>Abs = 1</code> ist wichtig: der Container liefert Zählerstände, keine Zuwächse.
+        Bei <code>0</code> würde der Baustein jeden Wert aufaddieren.
+      </div>
+    </li>
+  </ol>
+
+  <table style="margin-top:14px">
+    <thead>
+      <tr><th>Baustein-Eingang</th><th>Einheit</th><th>Virtueller Eingang</th><th>Umrechnung im Container</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><b>Ppwr</b> Produktionsleistung</td><td>kW</td><td class="mono">pv</td><td>W → kW</td></tr>
+      <tr><td><b>Gpwr</b> Netzleistung</td><td>kW</td><td class="mono">grid_power</td><td>W → kW, Vorzeichen gedreht</td></tr>
+      <tr><td><b>Spwr</b> Speicherleistung</td><td>kW</td><td class="mono">battery</td><td>W → kW</td></tr>
+      <tr><td><b>SoC</b> Ladezustand</td><td>%</td><td class="mono">battery_soc</td><td>unverändert</td></tr>
+      <tr><td><b>Ptot</b> Produktion gesamt</td><td>kWh</td><td class="mono">pv_total</td><td>unverändert</td></tr>
+      <tr><td><b>Gi</b> Netz Energie Import</td><td>kWh</td><td class="mono">grid_purchase_total</td><td>unverändert</td></tr>
+      <tr><td><b>Ge</b> Netz Energie Export</td><td>kWh</td><td class="mono">grid_feed_total</td><td>unverändert</td></tr>
+    </tbody>
+  </table>
+
+  <p class="hint" style="margin-top:12px">
+    Diese Einstellung ist ab Werk aktiv - du musst dafür nichts anklicken. Falls du sie
+    versehentlich überschrieben hast, stellt der Knopf sie wieder her:
+  </p>
+  <div class="toolbar">
+    <button data-action="/api/v1/mapping/preset/energiemonitor"
+            data-label="Werte für den Energiemonitor eingestellt">Werte zurücksetzen</button>
+    <button data-action="/api/v1/actions/resend" data-label="Alle Werte gesendet">Alle Werte jetzt senden</button>
+    <button data-action="/api/v1/actions/test" data-label="Testwert gesendet">Testwert senden</button>
+  </div>
+  <p class="hint">
+    Vorzeichen-Kontrolle: nachts ohne PV muss <b>Gpwr</b> positiv sein (Bezug aus dem Netz).
+    Ist es bei dir umgekehrt, drehst du auf der Seite <a href="/values">Werte</a> das
+    Vorzeichen des Faktors bei <code>grid_power</code> um.
+  </p>
+</div>
+
+<h2>Mehr als die sieben Werte</h2>
+<p class="hint">
+  Der Wechselrichter liefert 85 Werte - Batteriezellen, Backup-Phasen, Temperaturen,
+  Tages- und Gesamtstatistik. Was davon an Loxone geht, wählst du auf der Seite
+  <a href="/values">Werte</a>. Die folgenden Vorlagen enthalten alles, was dort aktiviert ist.
+</p>
+<div class="toolbar">
+  <a class="btn" href="/api/v1/loxone-template/udp?preset=none">UDP-Vorlage, alle aktivierten Werte</a>
+  <a class="btn" id="all-http" href="/api/v1/loxone-template/http?preset=none">HTTP-Vorlage, alle aktivierten Werte</a>
+</div>
+
+<h2 style="margin-top:22px">Die drei Übertragungswege</h2>
 <div class="grid two">
   <div class="card">
     <h3>1 · UDP-Push (empfohlen)</h3>
     <p>Der Container schickt jeden Wert als eigenes UDP-Paket <code>name: wert</code> an den
-       Miniserver. Kein Login, minimale Last, sofortige Aktualisierung.</p>
-    <ol class="steps">
-      <li>In Loxone Config: <b>Virtueller UDP-Eingang</b> anlegen, Port z.&nbsp;B. <code>7000</code>.</li>
-      <li>Unten die Vorlage herunterladen und in Loxone Config einfügen - damit sind alle
-          Eingänge inklusive Befehlserkennung und Einheit angelegt.</li>
-      <li>In den <a href="/settings">Einstellungen</a> Modus <code>udp</code>, Miniserver-IP und denselben Port eintragen.</li>
-    </ol>
-    <p class="hint">Befehlserkennung je Wert: <code>name: \v</code></p>
-    <div class="toolbar">
-      <a class="btn primary" href="/api/v1/loxone-template/udp">Vorlage herunterladen</a>
-      <a class="btn" href="/api/v1/loxone-template/udp?all=1">inkl. deaktivierter Werte</a>
-    </div>
+       Miniserver. Kein Login, minimale Last, Werte sind sofort da.</p>
+    <p class="hint">Befehlserkennung je Wert: <code>name: \v</code><br>
+       Einstellung: Modus <code>udp</code>, Miniserver-IP und derselbe Port wie im virtuellen Eingang.</p>
   </div>
 
   <div class="card">
     <h3>2 · HTTP-Push an virtuelle Eingänge</h3>
     <p>Der Container ruft je Wert <code>/dev/sps/io/&lt;name&gt;/&lt;wert&gt;</code> am Miniserver auf.
-       Braucht einen Benutzer mit Schreibrechten und erzeugt deutlich mehr Last als UDP.</p>
-    <ol class="steps">
-      <li>Je Wert einen <b>virtuellen Eingang</b> im Miniserver anlegen; der Name muss dem
-          Loxone-Namen auf der Seite <a href="/values">Werte</a> entsprechen.</li>
-      <li>In den <a href="/settings">Einstellungen</a> Modus <code>http</code>, IP, Benutzer und Passwort eintragen.</li>
-    </ol>
+       Braucht einen Benutzer mit Schreibrechten und erzeugt deutlich mehr Last als UDP -
+       sinnvoll, wenn UDP im Netz nicht erwünscht ist.</p>
+    <p class="hint">Die Namen der virtuellen Eingänge müssen den Loxone-Namen auf der Seite
+       <a href="/values">Werte</a> entsprechen.</p>
   </div>
 
   <div class="card">
     <h3>3 · REST-Pull (wie Simple-API in ioBroker)</h3>
     <p>Loxone holt sich die Werte selbst per <b>Virtuellem HTTP-Eingang</b>. Diese Schnittstelle
        ist immer aktiv - auch wenn der Push auf <code>off</code> steht.</p>
-    <ol class="steps">
-      <li>Vorlage herunterladen und in Loxone Config einfügen; die Adresse ist bereits eingetragen.</li>
-      <li>Abfrage-Intervall im virtuellen HTTP-Eingang nach Bedarf anpassen.</li>
-    </ol>
-    <div class="toolbar">
-      <a class="btn primary" id="tpl-http" href="/api/v1/loxone-template/http">Vorlage herunterladen</a>
-    </div>
-    <p class="hint">Befehlserkennung je Wert: <code>"name":\v</code></p>
-  </div>
-
-  <div class="card">
-    <h3>Endpunkte</h3>
-    <table>
-      <tbody>
-        <tr><td class="mono">/api/v1/values</td><td>alle Werte als flaches JSON</td></tr>
-        <tr><td class="mono">/api/v1/values/full</td><td>Werte inkl. Name, Einheit, Gruppe, Alter</td></tr>
-        <tr><td class="mono">/api/v1/value/&lt;name&gt;</td><td>ein einzelner Wert als reiner Text</td></tr>
-        <tr><td class="mono">/api/v1/status</td><td>Status von Modbus, Loxone und Watchdog</td></tr>
-        <tr><td class="mono">/healthz</td><td>Health-Check (200 / 503) für Docker</td></tr>
-      </tbody>
-    </table>
-    <p class="hint" style="margin-top:12px">Basis-URL dieser Instanz: <code id="base-url"></code></p>
-  </div>
-
-  <div class="card" style="grid-column:1/-1">
-    <h3>Energiemonitor-Baustein (Emo) einrichten</h3>
-    <p>
-      Der Baustein erwartet <b>kW</b> und eigene Vorzeichen. Ein Klick stellt die sieben
-      benötigten Werte im Container passend ein - danach kommen sie bereits richtig
-      umgerechnet an, in Loxone ist keine Korrektur und kein Multiplizierer nötig.
-    </p>
-    <div class="toolbar">
-      <button class="primary" data-action="/api/v1/mapping/preset/energiemonitor"
-              data-label="Werte für den Energiemonitor eingestellt">1 · Werte einstellen</button>
-      <a class="btn" id="emo-udp" href="/api/v1/loxone-template/udp?preset=energiemonitor">2 · UDP-Vorlage laden</a>
-      <a class="btn" id="emo-http" href="/api/v1/loxone-template/http?preset=energiemonitor">2 · HTTP-Vorlage laden</a>
-    </div>
-    <table>
-      <thead>
-        <tr><th>Emo-Eingang</th><th>Einheit</th><th>Virtueller Eingang</th><th>Umrechnung im Container</th></tr>
-      </thead>
-      <tbody>
-        <tr><td><b>Ppwr</b> Produktionsleistung</td><td>kW</td><td class="mono">pv</td><td>W → kW</td></tr>
-        <tr><td><b>Gpwr</b> Netzleistung</td><td>kW</td><td class="mono">grid_power</td><td>W → kW, Vorzeichen gedreht</td></tr>
-        <tr><td><b>Spwr</b> Speicherleistung</td><td>kW</td><td class="mono">battery</td><td>W → kW</td></tr>
-        <tr><td><b>SoC</b> Ladezustand</td><td>%</td><td class="mono">battery_soc</td><td>unverändert</td></tr>
-        <tr><td><b>Ptot</b> Produktion gesamt</td><td>kWh</td><td class="mono">pv_total</td><td>unverändert</td></tr>
-        <tr><td><b>Gi</b> Netz Energie Import</td><td>kWh</td><td class="mono">grid_purchase_total</td><td>unverändert</td></tr>
-        <tr><td><b>Ge</b> Netz Energie Export</td><td>kWh</td><td class="mono">grid_feed_total</td><td>unverändert</td></tr>
-      </tbody>
-    </table>
-    <p class="hint" style="margin-top:12px">
-      <b>3 · Am Baustein einstellen:</b> Datenquelle <code>Objekteingänge</code>,
-      Parameter <code>Abs = 1</code> (der Container liefert Zählerstände, keine Zuwächse)
-      und die <code>Speicherkapazität</code> deines Akkus in kWh.
-    </p>
-    <p class="hint">
-      Das Vorzeichen bei <code>Gpwr</code>: der Wechselrichter zählt Einspeisung positiv,
-      der Energiemonitor den Netzbezug. Deshalb steht bei <code>grid_power</code> der
-      Faktor <code>-0.001</code>. Zum Prüfen: nachts ohne PV muss <code>Gpwr</code>
-      positiv sein. Stimmt es bei dir andersherum, das Vorzeichen des Faktors auf der
-      Seite <a href="/values">Werte</a> umdrehen.
-    </p>
+    <p class="hint">Befehlserkennung je Wert: <code>"name":\v</code><br>
+       Basis-URL dieser Instanz: <code id="base-url"></code></p>
   </div>
 
   <div class="card">
@@ -117,35 +119,40 @@
       <li>In den Miniserver speichern.</li>
     </ol>
     <p class="hint">
-      Wichtig: Das <b>Namens-Präfix</b> in den Einstellungen muss genau das sein, das beim
-      Download der Vorlage eingestellt war - sonst passt die Befehlserkennung im Miniserver
-      nicht mehr zu dem, was der Container sendet.
-    </p>
-    <p class="hint">
       Meldet Loxone Config <i>„Ungültiges Format oder falscher Vorlagetyp“</i>, passt der
-      <code>templateType</code> in der Datei nicht zu deiner Version (getestet mit Loxone
-      Config 17). Er lässt sich beim Download überschreiben, z.&nbsp;B.
-      <code>/api/v1/loxone-template/udp?type=1</code>. Sicherer Weg: in Loxone Config einen
-      virtuellen Eingang von Hand anlegen, <b>als Vorlage speichern</b> und in der erzeugten
-      Datei nachsehen, welchen <code>templateType</code> deine Version schreibt.
+      <code>templateType</code> nicht zu deiner Version (getestet mit Loxone Config 17).
+      Er lässt sich beim Download überschreiben:
+      <code>/api/v1/loxone-template/udp?type=1</code>.
     </p>
   </div>
 
   <div class="card">
-    <h3>Hinweise</h3>
+    <h3>Endpunkte</h3>
+    <table>
+      <tbody>
+        <tr><td class="mono">/api/v1/values</td><td>alle Werte als flaches JSON</td></tr>
+        <tr><td class="mono">/api/v1/values/full</td><td>inkl. Name, Einheit, Gruppe, Alter</td></tr>
+        <tr><td class="mono">/api/v1/value/&lt;name&gt;</td><td>ein einzelner Wert als reiner Text</td></tr>
+        <tr><td class="mono">/api/v1/status</td><td>Status von Modbus, Loxone und Watchdog</td></tr>
+        <tr><td class="mono">/healthz</td><td>Health-Check (200 / 503) für Docker</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Gut zu wissen</h3>
     <ul>
-      <li>Textwerte (Seriennummer, Datum, Firmware) lassen sich nicht als analoger virtueller
-          Eingang abbilden und sind deshalb nicht in den Vorlagen enthalten. Über die REST-Schnittstelle
-          sind sie trotzdem verfügbar.</li>
-      <li>UDP ist verbindungslos: der Container merkt nicht, ob der Miniserver das Paket bekommen hat.
-          Ob Werte ankommen, siehst du am schnellsten im UDP-Monitor von Loxone Config.</li>
-      <li>Ist in den Einstellungen ein Web-Login gesetzt, gilt er auch für die REST-Schnittstelle.
-          Loxone muss dann <code>http://benutzer:passwort@host:port/api/v1/values</code> abfragen.</li>
+      <li><b>Textwerte</b> (Seriennummer, Datum, Firmware) lassen sich nicht als analoger
+          virtueller Eingang abbilden und sind deshalb nicht in den Vorlagen enthalten.
+          Über die REST-Schnittstelle sind sie trotzdem verfügbar.</li>
+      <li><b>UDP ist verbindungslos:</b> der Container merkt nicht, ob der Miniserver das
+          Paket bekommen hat. Ob Werte ankommen, siehst du am schnellsten im UDP-Monitor
+          von Loxone Config (Menü Tools).</li>
+      <li><b>Das Präfix muss passen:</b> ändere es nur, wenn du die Vorlage danach neu
+          herunterlädst und wieder einfügst - sonst greift die Befehlserkennung nicht mehr.</li>
+      <li>Ist ein <b>Web-Login</b> gesetzt, gilt er auch für die REST-Schnittstelle. Loxone
+          muss dann <code>http://benutzer:passwort@host:port/api/v1/values</code> abfragen.</li>
     </ul>
-    <div class="toolbar">
-      <button data-action="/api/v1/actions/resend" data-label="Alle Werte gesendet">Alle Werte jetzt senden</button>
-      <button data-action="/api/v1/actions/test" data-label="Testwert gesendet">Testwert senden</button>
-    </div>
   </div>
 </div>
 {% endblock %}
@@ -154,33 +161,17 @@
 <script>
   const base = `${location.protocol}//${location.host}`;
   document.getElementById("base-url").textContent = base;
-  /* Die Vorlage beschreibt immer den tatsaechlichen Stand des Containers.
-     Wer sie vor Schritt 1 laedt, bekaeme W statt kW - also vorher pruefen. */
-  async function presetApplied() {
-    try {
-      const data = await LX.get("/api/v1/mapping");
-      const pv = data.rows.find((row) => row.short === "pv");
-      return pv && Number(pv.factor) === 0.001;
-    } catch (err) {
-      return true; // im Zweifel nicht im Weg stehen
-    }
-  }
 
-  for (const id of ["emo-udp", "emo-http"]) {
-    document.getElementById(id).addEventListener("click", async (event) => {
-      if (await presetApplied()) return;
-      event.preventDefault();
-      if (confirm("Die Werte sind noch nicht für den Energiemonitor eingestellt - die "
-                + "Vorlage würde W statt kW enthalten.\n\nJetzt Schritt 1 ausführen?")) {
-        await LX.action("/api/v1/mapping/preset/energiemonitor", "Werte eingestellt");
-        location.href = event.target.href;
-      }
-    });
-  }
-
+  /* Die HTTP-Vorlagen sollen die Adresse enthalten, unter der diese Instanz
+     tatsaechlich erreichbar ist. */
   const pullUrl = encodeURIComponent(base + "/api/v1/values");
-  document.getElementById("tpl-http").href = `/api/v1/loxone-template/http?url=${pullUrl}`;
-  document.getElementById("emo-http").href =
-    `/api/v1/loxone-template/http?preset=energiemonitor&url=${pullUrl}`;
+  document.getElementById("emo-http").href = `/api/v1/loxone-template/http?url=${pullUrl}`;
+  document.getElementById("all-http").href =
+    `/api/v1/loxone-template/http?preset=none&url=${pullUrl}`;
+
+  /* Den eingestellten UDP-Port anzeigen, damit er nicht abgetippt werden muss. */
+  LX.get("/api/v1/config").then((config) => {
+    document.getElementById("udp-port").textContent = config.loxone.udp_port;
+  }).catch(() => {});
 </script>
 {% endblock %}
